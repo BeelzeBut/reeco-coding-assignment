@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+Thumbs.db
+
+# .NET build artifacts
+bin/
+obj/
+*.user
+.vs/
+
+# Test grader output
+tests/results.json
+
+# Seed data — kept locally, not republished
+data/*.csv
