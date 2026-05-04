@@ -49,7 +49,7 @@ Build a procurement order-management dashboard:
 | Query helper | **Dapper** | Thin micro-ORM; keeps SQL explicit, mapping ergonomic |
 | Cache / Pub-Sub / Queue | **StackExchange.Redis** | Used for async job state and event fan-out |
 | Database | **Postgres 16** | Provided by `docker-compose.yml` |
-| Frontend | **React + TypeScript** | PENDING toolchain choice (Vite vs Next vs CRA — see §10) |
+| Frontend | **Vite + React + TypeScript** | Tailwind for layout, TanStack Query for server state, Recharts for analytics charts. SPA only — no SSR. |
 
 **NuGet packages already installed in `src/OrderOps.Api`:**
 `Npgsql`, `Dapper`, `StackExchange.Redis`, `Microsoft.AspNetCore.OpenApi` (default).
@@ -78,35 +78,113 @@ candidate-package/
 ├── tests/                     ← READ-ONLY test suite (vitest, 83 tests)
 └── src/
     ├── OrderOps.slnx          ← solution (XML format, .NET 10 default)
-    └── OrderOps.Api/          ← ASP.NET Core Web API project
-        ├── Program.cs         ← bootstraps on port 3000
-        ├── Controllers/       ← (empty — to be populated)
-        ├── appsettings.json   ← Postgres + Redis connection strings
-        └── Properties/launchSettings.json
+    ├── OrderOps.Api/          ← ASP.NET Core Web API project
+    │   ├── Program.cs         ← bootstraps on port 3000
+    │   ├── Features/          ← group-by-feature: Orders/, Suppliers/, Products/,
+    │   │                        Anomalies/, Bulk/, Events/ — each with controller +
+    │   │                        service + repository + DTOs
+    │   ├── Infrastructure/    ← Npgsql connection factory, Redis client, error
+    │   │                        middleware, cache invalidation
+    │   ├── schema.sql         ← canonical schema, applied by Importer
+    │   ├── appsettings.json   ← Postgres + Redis connection strings
+    │   └── Properties/launchSettings.json
+    ├── OrderOps.Importer/     ← console app: applies schema, COPYs CSVs, idempotent
+    │   ├── Program.cs
+    │   └── OrderOps.Importer.csproj
+    └── OrderOps.Web/          ← Vite + React + TS frontend (see §3)
 ```
 
-`src/` structure beyond `OrderOps.Api` is **PENDING** — see §10.
+SOLID boundaries come from feature folders inside `OrderOps.Api`, not extra csprojs. The Importer is a separate project so reviewers can see CSV ingestion as a deliberate, isolated tool runnable via `dotnet run --project src/OrderOps.Importer`.
 
 ---
 
 ## 5. Data Model (CSV → Postgres)
 
-Schema is **PENDING** (planning phase). The CSV columns are fixed:
+The CSV columns are fixed; type choices below are confirmed against the actual data:
 
-| Table | CSV columns | Notes / edge cases (from README §Tips) |
+| Table | CSV columns | Notes / edge cases (from README §Tips + data inspection) |
 |---|---|---|
-| `orders` | `id, supplier_id, product_id, quantity, unit_price, total_price, status, priority, created_at, updated_at, warehouse, notes` | ~2% have `total_price ≠ quantity*unit_price`; ~200 have `updated_at < created_at`; some `quantity < 0` (returns); some `warehouse` null/empty; XSS payloads in `notes` |
-| `suppliers` | `id, name, email, rating, country, active, created_at` | `active` is `true`/`false` text; some inactive suppliers still have orders; duplicate name variations |
+| `orders` | `id, supplier_id, product_id, quantity, unit_price, total_price, status, priority, created_at, updated_at, warehouse, notes` | ~2% have `total_price ≠ quantity*unit_price`; ~200 have `updated_at < created_at`; some `quantity < 0` (returns, down to −49); 1 row has empty `warehouse` → NULL; XSS payloads (`<script>…`, `onmouseover=…`) in `notes` |
+| `suppliers` | `id, name, email, rating, country, active, created_at` | `active` is `true`/`false` text → boolean; ~37 country codes including non-ISO variants (DEN, GER, BRZ); duplicate name variations |
 | `products` | `id, name, category_id, sku, price` | `price` = catalog/base price; used by `price_consistency` & `price_spike` rules |
-| `categories` | `id, name, parent_id` | Hierarchical; `parent_id` empty for roots; **circular references possible** (must guard the recursive descent) |
+| `categories` | `id, name, parent_id` | Hierarchical; `parent_id` empty for roots; **real cycle in seed at `cat_150↔151↔152`** — must guard the recursive descent (Postgres self-FKs do NOT prevent cycles) |
 
 **Valid order statuses:** `pending, approved, rejected, shipped, delivered, cancelled`.
 
-**Required fields the schema must support that aren't in CSV:**
-- `version` (or equivalent) on `orders` for optimistic locking → returns `409` on stale PATCH.
-- A jobs table or Redis hash for bulk-action job tracking.
+### 5.1 Schema
 
-Indexing strategy is **PENDING** but at minimum needs to cover: `status`, `priority`, `supplier_id`, `warehouse`, `created_at`, and joined search on `products.name`.
+```sql
+CREATE TABLE categories (
+  id          varchar(16) PRIMARY KEY,
+  name        text NOT NULL,
+  parent_id   varchar(16) NULL
+    REFERENCES categories(id) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE suppliers (
+  id          varchar(16) PRIMARY KEY,
+  name        text NOT NULL,
+  email       text,
+  rating      numeric(3,2),
+  country     varchar(8),
+  active      boolean NOT NULL,
+  created_at  timestamptz NOT NULL
+);
+
+CREATE TABLE products (
+  id          varchar(16) PRIMARY KEY,
+  name        text NOT NULL,
+  category_id varchar(16) REFERENCES categories(id),
+  sku         text,
+  price       numeric(12,2) NOT NULL
+);
+
+CREATE TABLE orders (
+  id           varchar(16) PRIMARY KEY,
+  supplier_id  varchar(16) NOT NULL REFERENCES suppliers(id),
+  product_id   varchar(16) NOT NULL REFERENCES products(id),
+  quantity     integer NOT NULL,
+  unit_price   numeric(12,2) NOT NULL,
+  total_price  numeric(14,2) NOT NULL,
+  status       varchar(16) NOT NULL,
+  priority     varchar(16) NOT NULL,
+  created_at   timestamptz NOT NULL,
+  updated_at   timestamptz NOT NULL,
+  warehouse    varchar(32) NULL,
+  notes        text,
+  version      integer NOT NULL DEFAULT 1   -- server-internal optimistic lock; never in JSON
+);
+
+CREATE TABLE jobs (
+  id          varchar(32) PRIMARY KEY,
+  status      varchar(16) NOT NULL,
+  total       integer NOT NULL,
+  completed   integer NOT NULL DEFAULT 0,
+  failed      integer NOT NULL DEFAULT 0,
+  action      varchar(16) NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz NULL
+);
+```
+
+- `version` is **internal**: never accepted on PATCH input, never emitted in responses. Used by the conditional UPDATE in §8.1.
+- `parent_id` FK is `DEFERRABLE INITIALLY DEFERRED` — load order in COPY is unconstrained inside one tx; orphan parent_ids are rejected at commit. Cycles in the seed data still load (FKs don't prevent them) and must be guarded query-side.
+- `jobs` row is the **mirror** of Redis live state — see §8.2.
+
+### 5.2 Indexes
+
+```sql
+CREATE INDEX idx_orders_status      ON orders(status);
+CREATE INDEX idx_orders_priority    ON orders(priority);
+CREATE INDEX idx_orders_supplier    ON orders(supplier_id);
+CREATE INDEX idx_orders_warehouse   ON orders(warehouse);
+CREATE INDEX idx_orders_created_at  ON orders(created_at);
+CREATE INDEX idx_orders_total_price ON orders(total_price);
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_products_name_trgm ON products USING gin (name gin_trgm_ops);
+```
+
+The trigram index on `products.name` exists because `?search=` is case-insensitive substring on the joined `product_name` — a btree wouldn't help; a `gin_trgm_ops` index does.
 
 ---
 
@@ -192,35 +270,38 @@ Implementation order: **basic → filtering → aggregations → anomalies → b
 
 ---
 
-## 8. Cross-Cutting Concerns (PENDING design)
+## 8. Cross-Cutting Concerns
 
-These are decisions to make together in planning. Do not implement before alignment.
+Decisions below are confirmed and unblocked. Implementation must follow them; deviating requires re-opening the discussion per `coding-principles.md` §7.
 
-### 8.1 Concurrency
-- **Optimistic locking:** add a `version` column on `orders`, increment on every update, require client to send the version (or read-modify-write pattern: re-check the version inside `UPDATE … WHERE id=? AND version=?`).
-- **Bulk overlap:** server must dedupe across overlapping batches. Options: (a) row-level lock with `SELECT … FOR UPDATE SKIP LOCKED`; (b) Redis-based lock per `order_id`; (c) idempotent action via the version column itself.
-- **PENDING:** which approach to standardize on.
+### 8.1 Concurrency — internal `version` + `SELECT FOR UPDATE SKIP LOCKED`
 
-### 8.2 Background Jobs
-- Bulk action MUST return 202 in <500ms — so processing must be off the request path.
-- Options:
-  1. In-process `Channel<T>` worker with state in Postgres (`jobs` table)
-  2. Redis-backed list/stream with state in Redis hash
-  3. Hosted background service (`IHostedService`) consuming from a channel/queue
-- README says Redis is "optional" — option 1 is acceptable. **PENDING.**
+- **Single PATCH:** repository runs `UPDATE orders SET status=@s, updated_at=now(), version=version+1 WHERE id=@id AND version=@v RETURNING version`. If 0 rows affected → `409`. The service reads the current `version` immediately before the UPDATE in the same connection (read-your-writes). The version is **never** part of the API contract — tests send no version, and responses don't expose it. The `concurrency.test.ts` PATCH-race test passes because two concurrent UPDATEs read `version=v` and only one wins the conditional UPDATE.
+- **Bulk worker:** for each batch chunk, run `SELECT id, version FROM orders WHERE id = ANY(@ids) FOR UPDATE SKIP LOCKED` inside a transaction. Orders held by an overlapping job's transaction are silently skipped — they are then counted as `completed` because the other job has already applied the same action. This satisfies the "each order processed exactly once across overlapping batches" invariant. No Redis lock on the write path.
 
-### 8.3 Real-time
-- **SSE preferred** unless we have a concrete reason to use WS:
-  - Tests auto-detect, so functional outcome is identical.
-  - SSE is one-way (server → client) which matches the spec.
-  - Easier to implement in ASP.NET (just a streamed `IAsyncEnumerable` response with `text/event-stream`).
-- Event source: a single in-process pub/sub (or Redis pub/sub if we anticipate multiple instances). Order-update emitter sits inside the PATCH handler / bulk worker.
-- **PENDING:** SSE vs WS, and in-proc vs Redis pub/sub.
+### 8.2 Background Jobs — in-process `Channel<BulkJob>` + Redis-primary state + Postgres mirror
 
-### 8.4 CSV Import
-- **PENDING:** standalone `dotnet run --project Tools/Importer` or first-run hook in the API.
-- Postgres `COPY` is the fastest path. Streaming COPY via Npgsql's `BeginBinaryImport` is preferred over row-by-row INSERT.
-- Must be **idempotent** so re-running tests doesn't poison state — either truncate-then-load, or skip if the row count already matches the CSV.
+- Bulk endpoint enqueues onto `Channel.CreateUnbounded<BulkJob>()`; one `IHostedService` worker drains it. Easily meets the <500ms response and 30s completion budgets (50ms enqueue, work happens off the request path).
+- **Live state in Redis**: hash `job:{id}` with fields `status, total, completed, failed`. Worker uses `HINCRBY` per processed row. `GET /api/jobs/:id` reads from Redis only — microsecond latency, never hits Postgres on hot path.
+- **Postgres `jobs` mirror**: a row is INSERTed when the job is enqueued and UPDATEd to its terminal state on completion. Durable audit/observability without doubling write traffic during the run.
+- **Failure mode**: if Redis is unavailable mid-job, the API can fall back to the Postgres row for status (degraded but correct for already-finished jobs).
+
+### 8.3 Real-time — SSE only, in-process `EventHub`
+
+- SSE is sufficient: the test client (`tests/utils/events-client.ts`) tries WebSocket first (3s timeout) and falls back to SSE on failure, so SSE alone passes `realtime.test.ts`.
+- Implementation: a controller streams `text/event-stream` using `IAsyncEnumerable<EventEnvelope>`.
+- A singleton `EventHub` (DI-registered) holds a list of subscriber `Channel<EventEnvelope>`s. The PATCH handler and the bulk worker call `Publish()`. The controller filters by `?supplier_id=...` per subscriber.
+- No Redis pub/sub (single API instance is the deployment shape).
+
+### 8.4 CSV Import — `OrderOps.Importer` console, truncate-and-COPY, idempotent
+
+- Run as `dotnet run --project src/OrderOps.Importer`.
+- Steps inside one transaction:
+  1. Apply `schema.sql` (uses `CREATE TABLE IF NOT EXISTS` form so re-runs are no-ops).
+  2. `SET CONSTRAINTS ALL DEFERRED;`
+  3. `TRUNCATE orders, products, suppliers, categories RESTART IDENTITY CASCADE;`
+  4. `COPY` each CSV via Npgsql `BeginBinaryImport` — fastest path for 50k orders. Empty `warehouse` → `NULL` at parse time.
+- Re-running is safe: tests can drop and reload state freely. Importer prints row counts on completion and exits non-zero if any count mismatches the CSV header parse.
 
 ### 8.5 Validation & Errors
 - Single error envelope `{ error, code }`. Do not expose stack traces.
@@ -232,6 +313,33 @@ These are decisions to make together in planning. Do not implement before alignm
 - Notes/text fields contain XSS payloads — store as-is; never echo through HTML; ensure JSON encoding is correct.
 - SQL injection: Dapper parameterizes by default; never string-concatenate user input into SQL.
 - Sort field whitelist: `sort=...` must be checked against an allow-list of column names, never substituted directly.
+
+### 8.7 Redis usage map
+
+Redis is leaned on for speed; the cache layer is a **post-MVP pass** — every endpoint must be functionally correct against Postgres first, then cached.
+
+| Use | Pattern | Invalidation |
+|---|---|---|
+| Bulk job state (live counters) | `HSET job:{id} status total completed failed`, `HINCRBY` per row | `EXPIRE 86400` on terminal state |
+| Aggregation cache: `/api/orders/stats` | `SET stats:global` (JSON), no TTL | `DEL stats:global` on every successful PATCH and on bulk-job completion |
+| Aggregation cache: `/api/suppliers/:id/performance` | `SET perf:{supplier_id}` (JSON), no TTL | `DEL perf:{supplier_id}` on PATCH/bulk that touches an order with that supplier |
+| Real-time pub/sub | not used in MVP (single-instance deployment) | n/a |
+
+Invalidation is explicit, not TTL-based — staleness during the concurrency tests would be visible. Every write path that mutates an aggregate must `DEL` the affected cache keys; this is enforced by routing all writes through a single `OrdersWriteService` that calls the cache invalidator after a successful Postgres commit.
+
+### 8.8 Anomaly severity rubric
+
+Severity is computed deterministically from the matched rule set on a single order:
+
+| Bucket | Trigger |
+|---|---|
+| **high** | Any of: `negative_quantity`, `price_mismatch`, `timestamp_anomaly`. **OR** ≥3 anomaly types matched. **OR** order belongs to a `risky_supplier`. |
+| **medium** | Any of: `inactive_supplier`, `price_spike`. **OR** exactly 2 anomaly types matched. |
+| **low** | Single match of: `after_hours`. |
+
+Rationale: financial-integrity bugs (negative quantity, price mismatch, impossible timestamps) directly affect reported revenue and audit accuracy → **high**. Governance/cost concerns (using an inactive supplier, unusual price spike) are operational risks → **medium**. After-hours alone is informational → **low**. Multi-rule matches escalate one tier because correlated anomalies on a single order are stronger evidence of underlying data corruption.
+
+The full rubric (with worked examples) lives in `docs/ANOMALY_STRATEGY.md`, written when §1.4 is implemented.
 
 ---
 
@@ -245,19 +353,26 @@ These are decisions to make together in planning. Do not implement before alignm
 - [x] NuGet: Npgsql, Dapper, StackExchange.Redis
 - [x] Server listens on port 3000 (`GET /healthz` returns `{"status":"ok"}`)
 - [x] `appsettings.json` has `ConnectionStrings.Postgres` and `ConnectionStrings.Redis`
+- [x] **2026-05-04** — Architecture decisions §10.1–§10.8 resolved; §8.1–§8.8 promoted from PENDING; schema (§5) and indexes (§5.2) locked.
 
 ---
 
-## 10. Open Decisions (require human alignment per coding-principles §7)
+## 10. Open Decisions
 
-1. **Project structure inside `src/`** — single project vs. split (`OrderOps.Api`, `OrderOps.Domain`, `OrderOps.Infrastructure`, `OrderOps.Importer`).
-2. **Database schema** — exact tables, types, constraints, indexes; how `version` column works.
-3. **CSV import strategy** — separate tool vs. startup hook; idempotency mechanism.
-4. **Concurrency mechanism** — version column vs. row locks vs. Redis locks (likely combination).
-5. **Background job runtime** — in-process channel vs. Redis stream.
-6. **Real-time transport** — SSE (likely) vs. WS, and pub/sub mechanism.
-7. **Frontend toolchain** — Vite + React + TS is the lean default; confirm before scaffolding.
-8. **Anomaly severity rubric** — needs to be agreed before implementing §1.4 so it's defensible in `ANOMALY_STRATEGY.md`.
+All decisions resolved on **2026-05-04**. Each former item now has a concrete home in this document:
+
+| Was § 10 item | Now lives in |
+|---|---|
+| 1. Project structure inside `src/` | §4 (Repo Layout) |
+| 2. Database schema | §5.1 (Schema) + §5.2 (Indexes) |
+| 3. CSV import strategy | §8.4 |
+| 4. Concurrency mechanism | §8.1 |
+| 5. Background job runtime | §8.2 |
+| 6. Real-time transport | §8.3 |
+| 7. Frontend toolchain | §3 |
+| 8. Anomaly severity rubric | §8.8 (full rubric will land in `docs/ANOMALY_STRATEGY.md` with §1.4) |
+
+New PENDING items go here as they emerge. Empty is the steady state.
 
 ---
 
