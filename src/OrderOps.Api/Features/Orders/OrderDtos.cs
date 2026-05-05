@@ -31,7 +31,8 @@ public sealed record OrderDetail(
     string? Warehouse,
     string? Notes,
     string SupplierName,
-    string ProductName);
+    string ProductName,
+    DateTime? FlaggedAt);
 
 public sealed record PatchOrderRequest(string? Status);
 

@@ -2,11 +2,12 @@
 -- DROP-and-CREATE: CSVs are the only data source, so re-imports always
 -- pick up schema changes (no migration framework needed for a take-home).
 
-DROP TABLE IF EXISTS jobs       CASCADE;
-DROP TABLE IF EXISTS orders     CASCADE;
-DROP TABLE IF EXISTS products   CASCADE;
-DROP TABLE IF EXISTS suppliers  CASCADE;
-DROP TABLE IF EXISTS categories CASCADE;
+DROP TABLE IF EXISTS order_flags CASCADE;
+DROP TABLE IF EXISTS jobs        CASCADE;
+DROP TABLE IF EXISTS orders      CASCADE;
+DROP TABLE IF EXISTS products    CASCADE;
+DROP TABLE IF EXISTS suppliers   CASCADE;
+DROP TABLE IF EXISTS categories  CASCADE;
 
 CREATE TABLE categories (
   id          varchar(16) PRIMARY KEY,
@@ -58,6 +59,13 @@ CREATE TABLE jobs (
   action      varchar(16) NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz NULL
+);
+
+CREATE TABLE order_flags (
+  order_id      varchar(16) PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+  flagged_at    timestamptz NOT NULL DEFAULT now(),
+  source_job_id varchar(32) REFERENCES jobs(id),
+  reason        text
 );
 
 CREATE INDEX idx_orders_status      ON orders(status);

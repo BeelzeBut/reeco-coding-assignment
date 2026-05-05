@@ -13,7 +13,7 @@ public sealed class OrderRepository : IOrderRepository
     private const string DetailColumns = """
         o.id, o.supplier_id, o.product_id, o.quantity, o.unit_price, o.total_price,
         o.status, o.priority, o.created_at, o.updated_at, o.warehouse, o.notes,
-        s.name AS supplier_name, p.name AS product_name
+        s.name AS supplier_name, p.name AS product_name, of.flagged_at AS flagged_at
         """;
 
     private const string ListColumns = """
@@ -128,6 +128,7 @@ public sealed class OrderRepository : IOrderRepository
             FROM   orders o
             JOIN   suppliers s ON s.id = o.supplier_id
             JOIN   products  p ON p.id = o.product_id
+            LEFT JOIN order_flags of ON of.order_id = o.id
             WHERE  o.id = @id;
             """;
 
@@ -164,6 +165,7 @@ public sealed class OrderRepository : IOrderRepository
             FROM   orders o
             JOIN   suppliers s ON s.id = o.supplier_id
             JOIN   products  p ON p.id = o.product_id
+            LEFT JOIN order_flags of ON of.order_id = o.id
             WHERE  o.id = @id;
             """;
 

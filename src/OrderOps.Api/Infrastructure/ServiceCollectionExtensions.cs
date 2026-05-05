@@ -1,5 +1,6 @@
 using Dapper;
 using Npgsql;
+using OrderOps.Api.Features.Bulk;
 using OrderOps.Api.Features.Orders;
 using OrderOps.Api.Features.Products;
 using OrderOps.Api.Features.Suppliers;
@@ -37,9 +38,16 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<ISupplierRepository, SupplierRepository>();
         services.AddScoped<IProductRepository, ProductRepository>();
+        services.AddScoped<IBulkRepository, BulkRepository>();
         services.AddScoped<OrdersService>();
         services.AddScoped<SuppliersService>();
         services.AddScoped<ProductsService>();
+        services.AddScoped<BulkService>();
+
+        services.AddSingleton<BulkQueue>();
+        services.AddSingleton<IJobStateStore, RedisJobStateStore>();
+        services.AddHostedService<BulkWorker>();
+
         return services;
     }
 }
