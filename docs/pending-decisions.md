@@ -57,6 +57,6 @@ If the PO picks a single URL + a single style, the change is small:
 - Keep one of `BulkActionRequest` / `BulkActionsRequest` and delete the other.
 - If keeping snake_case: also remove the `[JsonPropertyName("orderIds")] / [JsonPropertyName("jobId")]` overrides on `BulkActionRequest` / `BulkActionResponse`, and drop the `[JsonPropertyName("jobId")]` on `BulkCompletedPayload`.
 - If keeping camelCase: drop the `/bulk-actions` handler and the `BulkActionsRequest` / `BulkActionsResponse` types.
-- Update `docs/architecture.md` §6.5 + §6.6 and the matching commit message.
+- Update `docs/ai-architecture.md` §6.5 + §6.6 and the matching commit message.
 
 Any FE work that already targets the existing bulk UI would also need its `api.ts` updated, but no FE has been wired to bulk yet (the bulk-action UI was deferred per the Suppliers FE slice).

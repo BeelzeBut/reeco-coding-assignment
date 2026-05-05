@@ -51,7 +51,7 @@ After each implementation increment, before handing back to the human, perform a
 
 Format the report consistently so it's easy to skim. Example:
 
-> **Build:** clean. **Confidence:** medium. **Risks:** (1) … (2) … (3) … **Edges considered:** …; **handled:** …; **deferred:** … **Docs:** updated `architecture.md` §6.1 and §9. **Human-check:** (1) new index on `orders.created_at` — verify name doesn't collide; (2) tightened error response for 404 — confirm shape matches `tests/basic-crud.test.ts:42`.
+> **Build:** clean. **Confidence:** medium. **Risks:** (1) … (2) … (3) … **Edges considered:** …; **handled:** …; **deferred:** … **Docs:** updated `ai-architecture.md` §6.1 and §9. **Human-check:** (1) new index on `orders.created_at` — verify name doesn't collide; (2) tightened error response for 404 — confirm shape matches `tests/basic-crud.test.ts:42`.
 
 ## 6. MVC for the backend
 
@@ -76,7 +76,7 @@ The project's docs are part of the contract — out-of-date docs are worse than 
 
 After **every** conversation that produces a meaningful change (new code, new decision, new dependency, scope change, scrap-and-rewrite, anomaly rubric tweak, new edge case discovered, etc.), before handing back to the human:
 
-- Update **`architecture.md`**:
+- Update **`ai-architecture.md`**:
   - Promote any **PENDING** decision that became a real decision (move it from §10 Open Decisions into the relevant section, with the chosen approach).
   - Append to **§9 Done So Far** as new milestones land.
   - Add new constraints, new endpoints, new edge cases, new packages, new files of note.
@@ -85,7 +85,7 @@ After **every** conversation that produces a meaningful change (new code, new de
 - Create or update other docs only when warranted. **All project docs live under `docs/`** — never write a new `.md` outside that folder (exception: `README.md` at the root, which is the assignment spec and is read-only).
   - `docs/ARCHITECTURE.md` (the deliverable for human reviewers) — written/maintained near submission.
   - `docs/ANOMALY_STRATEGY.md` (deliverable) — updated each time the anomaly rules or severity rubric change.
-  - Any new cross-cutting doc needs a one-line entry in `docs/architecture.md` so it's discoverable.
+  - Any new cross-cutting doc needs a one-line entry in `docs/ai-architecture.md` so it's discoverable.
 - Never let docs and reality drift. If you cannot update the doc in the same increment, raise it as a follow-up task and surface it to the human.
 
 The end-of-session report (§5) must include a **Docs:** line stating which docs were updated, or `Docs: none needed (no semantic change)` with one-sentence justification.
@@ -94,7 +94,7 @@ The end-of-session report (§5) must include a **Docs:** line stating which docs
 
 ## How to apply during a session
 
-1. Read `architecture.md` and this file at the start of every non-trivial session.
+1. Read `ai-architecture.md` and this file at the start of every non-trivial session.
 2. Before writing code: confirm scope of the increment with the human.
 3. While writing code: check rules §1–§4 continuously, not just at the end.
 4. Before handing back: run the §5 checklist (now including the **Docs:** line) and update docs per §8.

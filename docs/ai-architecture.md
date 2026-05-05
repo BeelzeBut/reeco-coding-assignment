@@ -87,11 +87,11 @@ candidate-package/
 ├── docker-compose.yml         ← Postgres + Redis (read-only intent)
 ├── .env.example / .env        ← PORT, DATABASE_URL, REDIS_URL
 ├── docs/                      ← ALL project docs live here
-│   ├── architecture.md        ← THIS FILE — AI working context
+│   ├── ai-architecture.md     ← THIS FILE — AI working context
 │   ├── coding-principles.md   ← binding rules the AI must follow
 │   ├── ui-design.md           ← binding rules for any frontend visual change
-│   ├── ARCHITECTURE.md        ← (future) deliverable for human reviewers
-│   ├── ANOMALY_STRATEGY.md    ← (future) deliverable for anomaly rules + severity
+│   ├── ARCHITECTURE.md        ← deliverable for human reviewers
+│   ├── ANOMALY_STRATEGY.md    ← deliverable for anomaly rules + severity
 │   └── pending-decisions.md   ← provisional choices needing PO review
 ├── .claude/
 │   └── commands/              ← project-scoped slash commands (/bootstrap, /commit)
