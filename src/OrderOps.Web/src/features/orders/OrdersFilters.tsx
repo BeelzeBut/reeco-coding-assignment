@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import {
   ORDER_WAREHOUSES,
   SORT_OPTIONS,
 } from "@/features/orders/constants";
+import { listSuppliers } from "@/features/suppliers/api";
 
 interface OrdersFiltersProps {
   value: OrdersFilters;
@@ -23,6 +25,17 @@ export function OrdersFiltersBar({ value, onChange, onReset }: OrdersFiltersProp
   const [searchInput, setSearchInput] = useState(value.search ?? "");
   const debouncedSearch = useDebouncedValue(searchInput, 300);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const suppliersQuery = useQuery({
+    queryKey: ["suppliers", "all"],
+    queryFn: ({ signal }) => listSuppliers({ limit: 500, offset: 0, signal }),
+    staleTime: 5 * 60_000,
+  });
+
+  const supplierOptions = useMemo(() => {
+    const rows = suppliersQuery.data?.data ?? [];
+    return [...rows].sort((a, b) => a.name.localeCompare(b.name));
+  }, [suppliersQuery.data]);
 
   useEffect(() => {
     const next = debouncedSearch.trim() || null;
@@ -152,14 +165,23 @@ export function OrdersFiltersBar({ value, onChange, onReset }: OrdersFiltersProp
               ))}
             </Select>
           </Field>
-          <Field label="Supplier ID">
-            <Input
-              placeholder="sup_042"
+          <Field label="Supplier">
+            <Select
               value={value.supplierId ?? ""}
               onChange={(e) =>
-                onChange({ ...value, supplierId: e.target.value.trim() || null })
+                onChange({ ...value, supplierId: e.target.value || null })
               }
-            />
+              disabled={suppliersQuery.isPending}
+            >
+              <option value="">
+                {suppliersQuery.isPending ? "Loading…" : "Any"}
+              </option>
+              {supplierOptions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.id})
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Min total">
             <Input

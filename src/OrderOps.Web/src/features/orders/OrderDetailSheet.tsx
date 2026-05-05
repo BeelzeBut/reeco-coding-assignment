@@ -1,4 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   Building2,
   Calendar,
@@ -14,9 +16,12 @@ import {
 import { Sheet, SheetBody, SheetHeader } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { ApiError } from "@/api/types";
-import { getOrder, type OrderDetail } from "@/features/orders/api";
+import { getOrder, patchOrder, type OrderDetail } from "@/features/orders/api";
 import { formatCurrency, formatDateTime, statusVariant } from "@/features/orders/format";
+import { ORDER_STATUSES } from "@/features/orders/constants";
 import { cn } from "@/lib/utils";
 
 interface OrderDetailSheetProps {
@@ -70,18 +75,29 @@ export function OrderDetailSheet({ orderId, onClose }: OrderDetailSheetProps) {
             {query.error instanceof ApiError ? ` (${query.error.code})` : ""}
           </div>
         )}
-        {query.data && <DetailContent order={query.data} />}
+        {query.data && (
+          <>
+            <StatusPatcher order={query.data} />
+            <DetailContent order={query.data} onClose={onClose} />
+          </>
+        )}
       </SheetBody>
     </Sheet>
   );
 }
 
-function DetailContent({ order }: { order: OrderDetail }) {
+function DetailContent({ order, onClose }: { order: OrderDetail; onClose: () => void }) {
   return (
     <>
       <Section icon={<Building2 className="h-4 w-4" />} title="Supplier">
         <div className="font-medium">{order.supplier_name}</div>
-        <div className="font-mono text-xs text-muted-foreground">{order.supplier_id}</div>
+        <Link
+          to={`/suppliers/${order.supplier_id}`}
+          onClick={onClose}
+          className="font-mono text-xs text-muted-foreground transition-colors hover:text-foreground hover:underline underline-offset-2"
+        >
+          {order.supplier_id}
+        </Link>
       </Section>
 
       <Section icon={<Package className="h-4 w-4" />} title="Product">
@@ -211,6 +227,67 @@ function TimelineRow({
       </span>
       <span className="font-medium">{value}</span>
     </div>
+  );
+}
+
+function StatusPatcher({ order }: { order: OrderDetail }) {
+  const qc = useQueryClient();
+  const [next, setNext] = useState("");
+
+  useEffect(() => {
+    setNext("");
+  }, [order.id]);
+
+  const mutation = useMutation({
+    mutationFn: (status: string) => patchOrder(order.id, { status }),
+    onSuccess: (updated) => {
+      qc.setQueryData(["order", order.id], updated);
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      setNext("");
+    },
+  });
+
+  const disabled = !next || next === order.status || mutation.isPending;
+
+  return (
+    <section className="rounded-lg border bg-card p-4 shadow-sm">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="text-primary">
+          <Tag className="h-4 w-4" />
+        </span>
+        Update status
+      </div>
+      <div className="flex items-center gap-2">
+        <Select
+          value={next}
+          onChange={(e) => setNext(e.target.value)}
+          disabled={mutation.isPending}
+          aria-label="New status"
+          className="flex-1"
+        >
+          <option value="">Change status…</option>
+          {ORDER_STATUSES.filter((s) => s !== order.status).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </Select>
+        <Button
+          size="sm"
+          disabled={disabled}
+          onClick={() => mutation.mutate(next)}
+        >
+          {mutation.isPending ? "Applying…" : "Apply"}
+        </Button>
+      </div>
+      {mutation.isError && (
+        <div className="mt-2 text-xs text-destructive">
+          {mutation.error instanceof ApiError
+            ? `${mutation.error.message} (${mutation.error.code})`
+            : "Failed to update status."}
+        </div>
+      )}
+    </section>
   );
 }
 

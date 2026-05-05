@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -244,25 +245,32 @@ function TopSuppliersList({
 }) {
   const max = rows[0]?.total_revenue ?? 1;
   return (
-    <ol className="space-y-2">
+    <ol className="space-y-1">
       {rows.map((s, i) => {
         const pct = (s.total_revenue / max) * 100;
         return (
-          <li key={s.supplier_id} className="grid grid-cols-[2rem_1fr_auto] items-center gap-3">
-            <span className="text-sm font-mono text-muted-foreground">#{i + 1}</span>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium">{s.supplier_name}</div>
-              <div className="font-mono text-xs text-muted-foreground">{s.supplier_id}</div>
-              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full bg-primary transition-all duration-500"
-                  style={{ width: `${pct}%` }}
-                />
+          <li key={s.supplier_id}>
+            <Link
+              to={`/suppliers/${s.supplier_id}`}
+              className="-mx-2 grid grid-cols-[2rem_1fr_auto] items-center gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/60"
+            >
+              <span className="text-sm font-mono text-muted-foreground">#{i + 1}</span>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium hover:underline underline-offset-2">
+                  {s.supplier_name}
+                </div>
+                <div className="font-mono text-xs text-muted-foreground">{s.supplier_id}</div>
+                <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary transition-all duration-500"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
               </div>
-            </div>
-            <span className="text-sm font-medium tabular-nums">
-              {formatCurrency(s.total_revenue)}
-            </span>
+              <span className="text-sm font-medium tabular-nums">
+                {formatCurrency(s.total_revenue)}
+              </span>
+            </Link>
           </li>
         );
       })}
