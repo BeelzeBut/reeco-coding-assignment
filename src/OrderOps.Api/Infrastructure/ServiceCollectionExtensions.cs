@@ -34,6 +34,22 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public const string FrontendCorsPolicy = "frontend-dev";
+
+    public static IServiceCollection AddOrderOpsCors(this IServiceCollection services, IConfiguration cfg)
+    {
+        var origins = cfg.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? new[] { "http://localhost:5173" };
+
+        services.AddCors(o => o.AddPolicy(FrontendCorsPolicy, p => p
+            .WithOrigins(origins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .WithExposedHeaders("Content-Type")));
+
+        return services;
+    }
+
     public static IServiceCollection AddOrderOpsFeatures(this IServiceCollection services)
     {
         services.AddScoped<IOrderRepository, OrderRepository>();

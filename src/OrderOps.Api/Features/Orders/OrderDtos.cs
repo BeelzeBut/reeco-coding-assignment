@@ -34,7 +34,9 @@ public sealed record OrderDetail(
     string ProductName,
     DateTime? FlaggedAt);
 
-public sealed record PatchOrderRequest(string? Status);
+public sealed record PatchOrderRequest(string? Status, string? Priority, string? Notes);
+
+public sealed record OrderUpdate(string? Status, string? Priority, string? Notes);
 
 public sealed class OrderListRequest
 {

@@ -5,6 +5,7 @@ namespace OrderOps.Api.Features.Bulk;
 public sealed class BulkService
 {
     private const int MaxBatchSize = 10_000;
+    private const int MaxReasonLength = 4096;
 
     private readonly IBulkRepository _repo;
     private readonly IJobStateStore _state;
@@ -27,6 +28,8 @@ public sealed class BulkService
             throw new ValidationException("action is required", "validation");
         if (!BulkActions.IsValid(req.Action))
             throw new ValidationException($"invalid action '{req.Action}'", "validation");
+        if (req.Reason is { Length: > MaxReasonLength })
+            throw new ValidationException($"reason exceeds {MaxReasonLength} characters", "reason_too_long");
 
         var jobId = "job_" + Guid.NewGuid().ToString("n")[..24];
 

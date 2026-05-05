@@ -102,14 +102,16 @@ public sealed class OrderRepository : IOrderRepository
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task<UpdateStatusOutcome> UpdateStatusAsync(string id, string newStatus, CancellationToken ct)
+    public async Task<UpdateStatusOutcome> UpdateAsync(string id, OrderUpdate update, CancellationToken ct)
     {
         var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == id, ct);
         if (order is null) return new UpdateStatusOutcome.NotFound();
         if (order.Status == OrderStatuses.Cancelled) return new UpdateStatusOutcome.AlreadyCancelled();
 
         var oldStatus = order.Status;
-        order.Status = newStatus;
+        if (update.Status is not null) order.Status = update.Status;
+        if (update.Priority is not null) order.Priority = update.Priority;
+        if (update.Notes is not null) order.Notes = update.Notes;
         order.UpdatedAt = DateTime.UtcNow;
         order.Version += 1;
 

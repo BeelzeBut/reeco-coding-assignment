@@ -368,15 +368,26 @@ Decisions below are confirmed and unblocked. Implementation must follow them; de
 - Re-running is safe and idempotent against the data files.
 
 ### 8.5 Validation & Errors
-- Single error envelope `{ error, code }`. Do not expose stack traces.
-- Input validation: query params (numbers, ISO-8601 dates, enums), path params (ID format), JSON body shapes.
-- Reject unknown query params? README doesn't say — default to ignoring (forgiving).
-- All 4xx responses must still set `Content-Type: application/json`.
+- Single error envelope `{ error, code }` rendered by `ExceptionHandlerMiddleware`. Stack traces are logged via `ILogger`, never echoed to clients.
+- Input validation: query params (numbers, ISO-8601 dates, enum allow-lists), path params (ID format), JSON body shapes, length bounds (`notes` ≤ 4096, bulk `reason` ≤ 4096), `PATCH /api/orders/:id` requires at least one of `status` / `priority` / `notes` (`code: no_fields`).
+- Sort field is mapped through a static allow-list (`OrderRepository.SortColumns`) — SQL identifiers are never interpolated from user input.
+- Pagination clamps `limit` to `[1, 1000]`, `offset` to `[0, ∞)`. Negative or oversize values return 200 with the clamped page rather than 400.
+- Unknown query params are ignored (forgiving). Unknown JSON body fields are also ignored — `System.Text.Json` skips them by default.
+- All error responses set `Content-Type: application/json` and inherit the security headers from §8.6.
 
 ### 8.6 Security
-- Notes/text fields contain XSS payloads — store as-is; never echo through HTML; ensure JSON encoding is correct.
-- SQL injection: Dapper parameterizes by default; never string-concatenate user input into SQL.
-- Sort field whitelist: `sort=...` must be checked against an allow-list of column names, never substituted directly.
+
+Full threat model + control inventory in [`docs/SECURITY.md`](./SECURITY.md). Summary of controls:
+
+- **Input validation** — enum allow-lists for `status` and `priority`, length caps on `notes` and bulk `reason`, ISO-8601 date parsing, pagination clamp.
+- **SQL injection** — EF Core 9 parameterizes LINQ-generated queries; the five `FromSqlRaw` / `SqlQueryRaw` / `ExecuteSqlRawAsync` call sites all use `NpgsqlParameter` with explicit types. No string concatenation of user input into SQL exists in the codebase.
+- **XSS** — CSV-imported XSS payloads in `notes` are stored verbatim and round-tripped as inert JSON string literals. The FE renders `notes` only via React's auto-escaped `{value}` interpolation.
+- **HTTP hardening** — `SecurityHeadersMiddleware` sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin` on every response (registered before the exception handler so error responses inherit them).
+- **CORS** — named policy `frontend-dev` allows the Vite dev origin (`http://localhost:5173` by default; configurable via `Cors:AllowedOrigins`).
+- **Body size** — Kestrel `MaxRequestBodySize = 1 MB`. 10000-element bulk requests are ~250 KB worst case, comfortably within the cap.
+- **Resource bounds** — bulk batch ≤ 10000 IDs; SSE per-subscriber `Channel<EventEnvelope>(256)` with `DropOldest` so a stalled client cannot wedge publishers.
+- **Concurrency** — `Order.Version` `IsConcurrencyToken` prevents lost-update races (one 200 / one 409 on simultaneous PATCH).
+- **Out of scope** — auth/authz, rate limiting, HTTPS/HSTS — see `docs/SECURITY.md` for "what we'd add for production".
 
 ### 8.7 Redis usage map
 
@@ -428,6 +439,8 @@ The full rubric (with worked examples) lives in `docs/ANOMALY_STRATEGY.md`, writ
 - [x] **2026-05-05** — Performance slice landed (no code changes). All 8 tests in `tests/performance.test.ts` pass against the EF-refactored data layer with no Redis caching layer added: `/api/orders` default <100ms p95, `?status=pending&sort=created_at` <200ms, `?search=hydraulic` <300ms (trigram index on `products.name`), `/api/orders/stats` ~570ms peak with 500ms p95 budget (just under), `/api/suppliers/sup_042/performance` <500ms, `/api/orders/anomalies` ~1500ms peak with 1000ms p95 (single SQL scan with array projection). Data-completeness tests confirm `orders.total = 50000`, `suppliers.total = 500`. Caching layer per §8.7 remains documented but deferred — Postgres + the existing indexes (status, priority, supplier_id, warehouse, created_at, total_price btree + name gin trgm) carry the budgets without it. **73/83 automated tests passing.**
 
 - [x] **2026-05-05** — Concurrency slice landed (no new mechanism). The optimistic-lock + `FOR UPDATE SKIP LOCKED` machinery from prior slices already covered the 10 tests in `tests/concurrency.test.ts`; the only code change was a second route alias `POST /api/orders/bulk-actions` (plural, snake_case) on `BulkController` to satisfy the test suite's choice of URL/format, alongside the existing `POST /api/orders/bulk-action` (singular, camelCase). New `BulkActionsRequest` / `BulkActionsResponse` DTOs use the global snake-case policy with no `[JsonPropertyName]` overrides. Both routes share `BulkService.EnqueueAsync`. Decision documented in `docs/pending-decisions.md` §1 for PO review. `tests/concurrency.test.ts` 10/10; basic 15/15, filter 10/10, agg 12/12, anomaly 8/8, bulk 10/10 still green against fresh seed; build clean. **65/73 automated tests passing.**
+
+- [x] **2026-05-05** — Security slice landed. All 5 tests in `tests/security.test.ts` were already green against the EF-refactored code (every assertion hits an existing control: `OrderStatuses.IsValid`, `Pagination.Normalize` clamp, `BulkService.MaxBatchSize`, JSON error envelope, unbounded `reason` accepted as 202). The slice instead added the production hygiene that satisfies the qualitative-review column: (1) `PATCH /api/orders/:id` extended to accept `priority` and `notes` per README §6.1, with new `OrderPriorities` allow-list (`critical, high, medium, low`), 4 KB cap on `notes`, "at least one field required" rule (`code: no_fields`); `OrderRepository.UpdateAsync` captures `oldStatus` once and applies all provided fields under a single optimistic-lock UPDATE; `order_updated` event still publishes only when `oldStatus != newStatus`. (2) Bulk `reason` field length-capped at 4 KB. (3) `Infrastructure/SecurityHeadersMiddleware` sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-origin` on every response — registered *before* `ExceptionHandlerMiddleware` so error envelopes inherit them. (4) Kestrel `MaxRequestBodySize = 1 MB`. (5) Named CORS policy `frontend-dev` reading `Cors:AllowedOrigins` from configuration (defaults to `http://localhost:5173`); applied globally between `UseRouting` and `MapControllers`. New `docs/SECURITY.md` deliverable documents the threat model, controls, known limitations, and production follow-ups. `tests/security.test.ts` 5/5; full regression 78/78 still green against fresh seed; build clean. **83/83 automated tests passing.**
 
 - [x] **2026-05-05** — Realtime slice landed. New `Features/Events/` folder: singleton `EventHub` (bounded per-subscriber `Channel<EventEnvelope>(256)`, `DropOldest` overflow policy, `IAsyncDisposable` for graceful shutdown) + `EventsController.Stream` serving SSE at `GET /api/events`. Headers set per spec (`Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`); initial `retry: 5000` hint; `: ping` heartbeat every 15s; single-writer event/heartbeat race via `Task.WhenAny`; client cancellation linked with `IHostApplicationLifetime.ApplicationStopping`; subscriber removed in a `finally` block on every exit path. PATCH path publishes `order_updated` (snake_case payload) when `oldStatus != newStatus`; `UpdateStatusOutcome.Updated` extended with `OldStatus` so the prior status survives the EF mutation. Bulk worker publishes `bulk_completed` (`{ jobId }` — camelCase via `[JsonPropertyName("jobId")]`) from `TryFinalize` on every terminal state. Third bulk route alias `POST /api/orders/bulk` added to satisfy `realtime.test.ts:89`; reuses canonical camelCase `BulkActionRequest`. Pending-decisions §1 expanded to the three-URL reality. `tests/realtime.test.ts` 5/5; basic 15/15, filter 10/10, agg 12/12, anomaly 8/8, bulk 10/10, concurrency 10/10, perf 8/8 still green; build clean. **78/83 automated tests passing.**
 

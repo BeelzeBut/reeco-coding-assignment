@@ -67,14 +67,25 @@ public sealed class OrdersService
         return "low";
     }
 
+    private const int MaxNotesLength = 4096;
+
     public async Task<OrderDetail> UpdateStatusAsync(string id, PatchOrderRequest body, CancellationToken ct)
     {
-        if (body.Status is null)
-            throw new ValidationException("status is required");
-        if (!OrderStatuses.IsValid(body.Status))
-            throw new ValidationException($"Invalid status '{body.Status}'", "invalid_status");
+        var status   = Trim(body.Status);
+        var priority = Trim(body.Priority);
+        var notes    = body.Notes; // notes preserved verbatim; only length-capped
 
-        var outcome = await _repo.UpdateStatusAsync(id, body.Status, ct);
+        if (status is null && priority is null && notes is null)
+            throw new ValidationException("at least one of status, priority, notes is required", "no_fields");
+
+        if (status is not null && !OrderStatuses.IsValid(status))
+            throw new ValidationException($"Invalid status '{status}'", "invalid_status");
+        if (priority is not null && !OrderPriorities.IsValid(priority))
+            throw new ValidationException($"Invalid priority '{priority}'", "invalid_priority");
+        if (notes is not null && notes.Length > MaxNotesLength)
+            throw new ValidationException($"notes exceeds {MaxNotesLength} characters", "notes_too_long");
+
+        var outcome = await _repo.UpdateAsync(id, new OrderUpdate(status, priority, notes), ct);
         switch (outcome)
         {
             case UpdateStatusOutcome.Updated u:
