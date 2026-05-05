@@ -8,4 +8,5 @@ public interface IOrderRepository
     Task<OrderDetail?> GetByIdAsync(string id, CancellationToken ct);
     Task<UpdateStatusOutcome> UpdateStatusAsync(string id, string newStatus, CancellationToken ct);
     Task<OrderStats> GetStatsAsync(CancellationToken ct);
+    Task<IReadOnlyList<AnomalyRow>> GetAnomalousAsync(CancellationToken ct);
 }

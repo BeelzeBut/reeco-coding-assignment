@@ -37,6 +37,28 @@ public sealed class OrdersService
 
     public Task<OrderStats> GetStatsAsync(CancellationToken ct) => _repo.GetStatsAsync(ct);
 
+    public async Task<AnomalyResponse> GetAnomaliesAsync(CancellationToken ct)
+    {
+        var rows = await _repo.GetAnomalousAsync(ct);
+        var items = new List<AnomalyItem>(rows.Count);
+        foreach (var r in rows)
+            items.Add(new AnomalyItem(r.OrderId, r.AnomalyTypes, DetermineSeverity(r.AnomalyTypes)));
+        return new AnomalyResponse(items);
+    }
+
+    private static readonly HashSet<string> HighSingle = new() { "negative_quantity", "price_mismatch", "timestamp_anomaly" };
+    private static readonly HashSet<string> MediumSingle = new() { "inactive_supplier", "price_spike" };
+
+    private static string DetermineSeverity(string[] types)
+    {
+        if (types.Length >= 3) return "high";
+        foreach (var t in types) if (t == "risky_supplier") return "high";
+        foreach (var t in types) if (HighSingle.Contains(t)) return "high";
+        if (types.Length == 2) return "medium";
+        foreach (var t in types) if (MediumSingle.Contains(t)) return "medium";
+        return "low";
+    }
+
     public async Task<OrderDetail> UpdateStatusAsync(string id, PatchOrderRequest body, CancellationToken ct)
     {
         if (body.Status is null)

@@ -233,4 +233,38 @@ public sealed class OrderRepository : IOrderRepository
             topSuppliers,
             byWarehouse);
     }
+
+    public async Task<IReadOnlyList<AnomalyRow>> GetAnomalousAsync(CancellationToken ct)
+    {
+        const string sql = """
+            SELECT o.id AS order_id,
+                   array_remove(ARRAY[
+                     CASE WHEN abs(o.total_price - (o.quantity * o.unit_price)) > 0.01 THEN 'price_mismatch' END,
+                     CASE WHEN o.quantity < 0                                          THEN 'negative_quantity' END,
+                     CASE WHEN o.updated_at < o.created_at                             THEN 'timestamp_anomaly' END,
+                     CASE WHEN s.active = false                                        THEN 'inactive_supplier' END,
+                     CASE WHEN o.unit_price > p.price * 1.5                            THEN 'price_spike' END,
+                     CASE WHEN extract(hour FROM o.created_at) < 8
+                            OR extract(hour FROM o.created_at) >= 18                   THEN 'after_hours' END,
+                     CASE WHEN s.rating <= 1.5                                         THEN 'risky_supplier' END
+                   ], NULL) AS anomaly_types
+            FROM   orders o
+            JOIN   suppliers s ON s.id = o.supplier_id
+            JOIN   products  p ON p.id = o.product_id
+            WHERE  abs(o.total_price - (o.quantity * o.unit_price)) > 0.01
+               OR  o.quantity < 0
+               OR  o.updated_at < o.created_at
+               OR  s.active = false
+               OR  o.unit_price > p.price * 1.5
+               OR  extract(hour FROM o.created_at) < 8
+               OR  extract(hour FROM o.created_at) >= 18
+               OR  s.rating <= 1.5
+            ORDER  BY o.id;
+            """;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        var rows = await conn.QueryAsync<AnomalyRow>(new CommandDefinition(
+            sql, cancellationToken: ct));
+        return rows.AsList();
+    }
 }
