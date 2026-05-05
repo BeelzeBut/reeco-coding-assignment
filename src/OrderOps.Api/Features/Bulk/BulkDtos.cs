@@ -10,6 +10,10 @@ public sealed record BulkActionRequest(
 public sealed record BulkActionResponse(
     [property: JsonPropertyName("jobId")] string JobId);
 
+public sealed record BulkActionsRequest(string[]? OrderIds, string? Action, string? Reason);
+
+public sealed record BulkActionsResponse(string JobId);
+
 public sealed record JobProgress(int Total, int Completed, int Failed);
 
 public sealed record JobStatusResponse(string Status, JobProgress Progress);
