@@ -50,6 +50,12 @@ public sealed class OrderRepository : IOrderRepository
         }
         if (q.MinTotal.HasValue)
             query = query.Where(o => o.TotalPrice >= q.MinTotal.Value);
+        if (q.Flagged.HasValue)
+        {
+            query = q.Flagged.Value
+                ? query.Where(o => o.Flag != null)
+                : query.Where(o => o.Flag == null);
+        }
         if (!string.IsNullOrEmpty(q.Search))
         {
             var pattern = "%" + q.Search + "%";

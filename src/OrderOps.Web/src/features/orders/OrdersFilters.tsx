@@ -148,6 +148,28 @@ export function OrdersFiltersBar({ value, onChange, onReset }: OrdersFiltersProp
         })}
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Flag
+        </span>
+        <Chip
+          active={value.flagged === true}
+          onClick={() =>
+            onChange({ ...value, flagged: value.flagged === true ? null : true })
+          }
+        >
+          Flagged
+        </Chip>
+        <Chip
+          active={value.flagged === false}
+          onClick={() =>
+            onChange({ ...value, flagged: value.flagged === false ? null : false })
+          }
+        >
+          Unflagged
+        </Chip>
+      </div>
+
       {advancedOpen && (
         <div className="grid grid-cols-1 gap-3 border-t pt-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Warehouse">
@@ -261,6 +283,7 @@ function countActiveFilters(f: OrdersFilters): number {
   let n = 0;
   if (f.statuses.length > 0) n++;
   if (f.priority) n++;
+  if (f.flagged !== null) n++;
   if (f.search) n++;
   return n + countAdvanced(f);
 }

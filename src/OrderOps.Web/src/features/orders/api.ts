@@ -45,6 +45,7 @@ export interface OrdersFilters {
   dateFrom: string | null;
   dateTo: string | null;
   minTotal: number | null;
+  flagged: boolean | null;
   search: string | null;
   sort: SortField;
   order: SortOrder;
@@ -58,6 +59,7 @@ export const defaultFilters: OrdersFilters = {
   dateFrom: null,
   dateTo: null,
   minTotal: null,
+  flagged: null,
   search: null,
   sort: "id",
   order: "asc",
@@ -81,6 +83,7 @@ export function listOrders({ filters, limit, offset, signal }: ListOrdersParams)
   if (filters.dateFrom) qs.set("date_from", filters.dateFrom);
   if (filters.dateTo) qs.set("date_to", filters.dateTo);
   if (filters.minTotal !== null) qs.set("min_total", String(filters.minTotal));
+  if (filters.flagged !== null) qs.set("flagged", String(filters.flagged));
   if (filters.search) qs.set("search", filters.search);
   qs.set("sort", filters.sort);
   qs.set("order", filters.order);

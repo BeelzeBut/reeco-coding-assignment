@@ -28,6 +28,7 @@ public sealed class OrdersService
             ParseDate(req.DateFrom, "date_from"),
             ParseDate(req.DateTo, "date_to"),
             req.MinTotal,
+            req.Flagged,
             Trim(req.Search),
             Trim(req.Sort),
             Trim(req.Order),

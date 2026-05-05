@@ -50,6 +50,7 @@ public sealed class OrderListRequest
     [FromQuery(Name = "date_from")]   public string?  DateFrom    { get; set; }
     [FromQuery(Name = "date_to")]     public string?  DateTo      { get; set; }
     [FromQuery(Name = "min_total")]   public decimal? MinTotal    { get; set; }
+    [FromQuery(Name = "flagged")]     public bool?    Flagged     { get; set; }
     [FromQuery(Name = "search")]      public string?  Search      { get; set; }
     [FromQuery(Name = "sort")]        public string?  Sort        { get; set; }
     [FromQuery(Name = "order")]       public string?  Order       { get; set; }
@@ -65,6 +66,7 @@ public sealed record OrderListQuery(
     DateTime? DateFrom,
     DateTime? DateTo,
     decimal? MinTotal,
+    bool? Flagged,
     string? Search,
     string? Sort,
     string? Order,
