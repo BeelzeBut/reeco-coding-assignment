@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Mvc;
+
 namespace OrderOps.Api.Features.Orders;
 
 public sealed record OrderListItem(
@@ -12,7 +14,8 @@ public sealed record OrderListItem(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     string? Warehouse,
-    string? Notes);
+    string? Notes,
+    string ProductName);
 
 public sealed record OrderDetail(
     string Id,
@@ -31,6 +34,36 @@ public sealed record OrderDetail(
     string ProductName);
 
 public sealed record PatchOrderRequest(string? Status);
+
+public sealed class OrderListRequest
+{
+    [FromQuery(Name = "status")]      public string?  Status      { get; set; }
+    [FromQuery(Name = "priority")]    public string?  Priority    { get; set; }
+    [FromQuery(Name = "supplier_id")] public string?  SupplierId  { get; set; }
+    [FromQuery(Name = "warehouse")]   public string?  Warehouse   { get; set; }
+    [FromQuery(Name = "date_from")]   public string?  DateFrom    { get; set; }
+    [FromQuery(Name = "date_to")]     public string?  DateTo      { get; set; }
+    [FromQuery(Name = "min_total")]   public decimal? MinTotal    { get; set; }
+    [FromQuery(Name = "search")]      public string?  Search      { get; set; }
+    [FromQuery(Name = "sort")]        public string?  Sort        { get; set; }
+    [FromQuery(Name = "order")]       public string?  Order       { get; set; }
+    [FromQuery(Name = "limit")]       public int?     Limit       { get; set; }
+    [FromQuery(Name = "offset")]      public int?     Offset      { get; set; }
+}
+
+public sealed record OrderListQuery(
+    IReadOnlyList<string>? Statuses,
+    string? Priority,
+    string? SupplierId,
+    string? Warehouse,
+    DateTime? DateFrom,
+    DateTime? DateTo,
+    decimal? MinTotal,
+    string? Search,
+    string? Sort,
+    string? Order,
+    int Limit,
+    int Offset);
 
 public abstract record UpdateStatusOutcome
 {

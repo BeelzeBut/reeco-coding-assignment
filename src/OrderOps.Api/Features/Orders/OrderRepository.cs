@@ -16,25 +16,109 @@ public sealed class OrderRepository : IOrderRepository
         s.name AS supplier_name, p.name AS product_name
         """;
 
-    public async Task<PagedResult<OrderListItem>> ListAsync(int limit, int offset, CancellationToken ct)
+    private const string ListColumns = """
+        o.id, o.supplier_id, o.product_id, o.quantity, o.unit_price, o.total_price,
+        o.status, o.priority, o.created_at, o.updated_at, o.warehouse, o.notes,
+        p.name AS product_name
+        """;
+
+    // Whitelist: API field name → SQL column. Anything not in this map falls back to o.id.
+    private static readonly IReadOnlyDictionary<string, string> SortColumns =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"]          = "o.id",
+            ["created_at"]  = "o.created_at",
+            ["updated_at"]  = "o.updated_at",
+            ["total_price"] = "o.total_price",
+            ["unit_price"]  = "o.unit_price",
+            ["quantity"]    = "o.quantity",
+            ["status"]      = "o.status",
+            ["priority"]    = "o.priority",
+            ["supplier_id"] = "o.supplier_id",
+            ["warehouse"]   = "o.warehouse",
+        };
+
+    public async Task<PagedResult<OrderListItem>> ListAsync(OrderListQuery q, CancellationToken ct)
     {
-        const string sql = """
-            SELECT id, supplier_id, product_id, quantity, unit_price, total_price,
-                   status, priority, created_at, updated_at, warehouse, notes
-            FROM   orders
-            ORDER  BY id
+        var (where, parameters) = BuildWhere(q);
+        var sortCol = q.Sort is not null && SortColumns.TryGetValue(q.Sort, out var c) ? c : "o.id";
+        var sortDir = string.Equals(q.Order, "desc", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
+        var countJoin = string.IsNullOrEmpty(q.Search) ? "" : "JOIN products p ON p.id = o.product_id";
+
+        parameters.Add("limit", q.Limit);
+        parameters.Add("offset", q.Offset);
+
+        var sql = $"""
+            SELECT {ListColumns}
+            FROM   orders o
+            JOIN   products p ON p.id = o.product_id
+            {where}
+            ORDER  BY {sortCol} {sortDir}, o.id
             LIMIT  @limit OFFSET @offset;
 
-            SELECT count(*) FROM orders;
+            SELECT count(*)
+            FROM   orders o
+            {countJoin}
+            {where};
             """;
 
         await using var conn = await _dataSource.OpenConnectionAsync(ct);
         await using var grid = await conn.QueryMultipleAsync(new CommandDefinition(
-            sql, new { limit, offset }, cancellationToken: ct));
+            sql, parameters, cancellationToken: ct));
 
         var rows = (await grid.ReadAsync<OrderListItem>()).AsList();
         var total = await grid.ReadSingleAsync<long>();
-        return new PagedResult<OrderListItem>(rows, total, limit, offset);
+        return new PagedResult<OrderListItem>(rows, total, q.Limit, q.Offset);
+    }
+
+    private static (string Where, DynamicParameters P) BuildWhere(OrderListQuery q)
+    {
+        var clauses = new List<string>();
+        var p = new DynamicParameters();
+
+        if (q.Statuses is { Count: > 0 })
+        {
+            clauses.Add("o.status = ANY(@statuses)");
+            p.Add("statuses", q.Statuses.ToArray());
+        }
+        if (!string.IsNullOrEmpty(q.Priority))
+        {
+            clauses.Add("o.priority = @priority");
+            p.Add("priority", q.Priority);
+        }
+        if (!string.IsNullOrEmpty(q.SupplierId))
+        {
+            clauses.Add("o.supplier_id = @supplier_id");
+            p.Add("supplier_id", q.SupplierId);
+        }
+        if (!string.IsNullOrEmpty(q.Warehouse))
+        {
+            clauses.Add("o.warehouse = @warehouse");
+            p.Add("warehouse", q.Warehouse);
+        }
+        if (q.DateFrom.HasValue)
+        {
+            clauses.Add("o.created_at >= @date_from");
+            p.Add("date_from", q.DateFrom.Value);
+        }
+        if (q.DateTo.HasValue)
+        {
+            clauses.Add("o.created_at < @date_to + interval '1 day'");
+            p.Add("date_to", q.DateTo.Value);
+        }
+        if (q.MinTotal.HasValue)
+        {
+            clauses.Add("o.total_price >= @min_total");
+            p.Add("min_total", q.MinTotal.Value);
+        }
+        if (!string.IsNullOrEmpty(q.Search))
+        {
+            clauses.Add("p.name ILIKE '%' || @search || '%'");
+            p.Add("search", q.Search);
+        }
+
+        var where = clauses.Count == 0 ? "" : "WHERE " + string.Join(" AND ", clauses);
+        return (where, p);
     }
 
     public async Task<OrderDetail?> GetByIdAsync(string id, CancellationToken ct)

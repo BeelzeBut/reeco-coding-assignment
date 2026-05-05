@@ -238,7 +238,7 @@ All paths under `/api`. List endpoints return the paginated shape; errors return
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/orders` | Paginated; default `limit=20`; supports filters (§6.2) |
+| GET | `/api/orders` | Paginated; default `limit=20`; supports filters (§6.2). Each row also carries the joined `product_name` (search filter operates on this column). |
 | GET | `/api/orders/:id` | Joined `supplier_name`, `product_name`; 404 if missing |
 | PATCH | `/api/orders/:id` | Updates status/priority. 400 invalid status; 409 if already cancelled OR optimistic-lock conflict |
 | GET | `/api/suppliers` | Paginated |
@@ -404,6 +404,7 @@ The full rubric (with worked examples) lives in `docs/ANOMALY_STRATEGY.md`, writ
 - [x] **2026-05-05** — `OrderOps.Web` scaffold shipped; Vite + React + TS + Tailwind v3.4 + shadcn/ui + TanStack Query + Recharts + React Router. Vite dev proxy `/api → :3000` verified end-to-end through `/api/healthz` (added to API alongside `/healthz`). Placeholder pages render at all 4 routes; `npm run build` and `tsc --noEmit` pass clean.
 - [x] **2026-05-05** — Theme + design rules locked. `docs/ui-design.md` written (binding); slate + emerald palette, 10px radius, Inter typeface, soft shadows, 150ms transitions. `ThemeProvider` + tri-state toggle (light/dark/system) in the nav with `localStorage` persistence and pre-paint flash-prevention script in `index.html`. `Skeleton` primitive added; `OrdersPage` uses it for the loading state.
 - [x] **2026-05-05** — Basic-CRUD slice landed. Backend foundation in place: feature folders (`Features/Orders|Suppliers|Products`) + `Infrastructure/`, snake_case JSON, error-envelope middleware (`{error, code}`), DI for `NpgsqlDataSource` (singleton, pooled) and `IConnectionMultiplexer` (lazy reconnect, no consumers yet), Dapper `MatchNamesWithUnderscores=true`. 7 endpoints implemented per §6.1 (orders list/detail/PATCH with full §8.1 optimistic-lock; suppliers list/detail with computed `order_count`/`total_revenue`; products list with cycle-guarded recursive category descent — `id::text` cast on the CTE path to satisfy PG type unification). `tests/basic-crud.test.ts` 15/15 green; build clean.
+- [x] **2026-05-05** — Filtering slice landed on `GET /api/orders`. Bound `OrderListRequest` (snake_case via `[FromQuery(Name=…)]`); service parses status comma-list, ISO dates (`AssumeUniversal | AdjustToUniversal`), trims string filters, normalizes pagination; repository builds parameterized WHERE dynamically (`status = ANY(@statuses)`, `priority`, `supplier_id`, `warehouse`, `created_at >= @date_from`, `created_at < @date_to + interval '1 day'`, `total_price >= @min_total`, `p.name ILIKE '%' || @search || '%'`). Sort whitelist (`id, created_at, updated_at, total_price, unit_price, quantity, status, priority, supplier_id, warehouse`) maps API field → SQL column; unknown values fall back to `o.id`. List rows now include `product_name` (always-on `JOIN products`); count query joins products only when `search` is set. `tests/filtering.test.ts` 10/10 green; basic-crud 15/15 still green; build clean.
 
 ---
 
