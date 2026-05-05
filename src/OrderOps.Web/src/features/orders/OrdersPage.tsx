@@ -31,10 +31,12 @@ import { BulkActionBar } from "@/features/orders/BulkActionBar";
 import { BulkJobToast } from "@/features/orders/BulkJobToast";
 import { useBulkSelection } from "@/features/orders/useBulkSelection";
 import { cn } from "@/lib/utils";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 
 const PAGE_SIZE = 25;
 
 export function OrdersPage() {
+  useDocumentTitle("Orders");
   const [filters, setFiltersInternal] = useState<OrdersFilters>(defaultFilters);
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);

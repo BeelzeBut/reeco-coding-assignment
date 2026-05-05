@@ -48,6 +48,7 @@ import { defaultFilters, listOrders } from "@/features/orders/api";
 import { formatCurrency, formatDateTime, statusVariant } from "@/features/orders/format";
 import { OrderDetailSheet } from "@/features/orders/OrderDetailSheet";
 import { cn } from "@/lib/utils";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 
 const RECENT_ORDERS_LIMIT = 10;
 
@@ -61,6 +62,8 @@ export function SupplierDetailPage() {
     retry: (failureCount, error) =>
       error instanceof ApiError && error.status === 404 ? false : failureCount < 1,
   });
+
+  useDocumentTitle(detail.data?.name ?? `Supplier ${id}`);
 
   if (detail.isError && detail.error instanceof ApiError && detail.error.status === 404) {
     return <NotFound id={id} />;

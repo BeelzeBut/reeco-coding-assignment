@@ -16,11 +16,13 @@ import {
 } from "@/components/ui/table";
 import { ApiError } from "@/api/types";
 import { listSuppliers, type SupplierListItem } from "@/features/suppliers/api";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 
 const PAGE_SIZE = 25;
 const COLUMN_COUNT = 6;
 
 export function SuppliersPage() {
+  useDocumentTitle("Suppliers");
   const navigate = useNavigate();
   const [offset, setOffset] = useState(0);
 

@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/features/orders/format";
 import { cn } from "@/lib/utils";
 import { getOrdersStats, type OrdersStats } from "@/features/stats/api";
+import { useDocumentTitle } from "@/hooks/use-document-title";
 
 const STATUS_COLOR: Record<string, string> = {
   delivered: "hsl(142, 70%, 45%)",
@@ -39,6 +40,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export function StatsPage() {
+  useDocumentTitle("Analytics");
   const query = useQuery({
     queryKey: ["orders", "stats"],
     queryFn: ({ signal }) => getOrdersStats(signal),
