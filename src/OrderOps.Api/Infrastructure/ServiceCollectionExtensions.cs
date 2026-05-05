@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using OrderOps.Api.Data;
 using OrderOps.Api.Features.Bulk;
+using OrderOps.Api.Features.Events;
 using OrderOps.Api.Features.Orders;
 using OrderOps.Api.Features.Products;
 using OrderOps.Api.Features.Suppliers;
@@ -46,6 +47,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<BulkQueue>();
         services.AddSingleton<IJobStateStore, RedisJobStateStore>();
+        services.AddSingleton<IEventHub, EventHub>();
         services.AddHostedService<BulkWorker>();
 
         return services;

@@ -71,5 +71,5 @@ public abstract record UpdateStatusOutcome
     public sealed record NotFound : UpdateStatusOutcome;
     public sealed record AlreadyCancelled : UpdateStatusOutcome;
     public sealed record VersionConflict : UpdateStatusOutcome;
-    public sealed record Updated(OrderDetail Order) : UpdateStatusOutcome;
+    public sealed record Updated(OrderDetail Order, string OldStatus) : UpdateStatusOutcome;
 }

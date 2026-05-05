@@ -1,3 +1,5 @@
+using OrderOps.Api.Features.Events;
+
 namespace OrderOps.Api.Features.Bulk;
 
 public sealed class BulkWorker : BackgroundService
@@ -6,12 +8,14 @@ public sealed class BulkWorker : BackgroundService
 
     private readonly BulkQueue _queue;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IEventHub _events;
     private readonly ILogger<BulkWorker> _log;
 
-    public BulkWorker(BulkQueue queue, IServiceScopeFactory scopeFactory, ILogger<BulkWorker> log)
+    public BulkWorker(BulkQueue queue, IServiceScopeFactory scopeFactory, IEventHub events, ILogger<BulkWorker> log)
     {
         _queue = queue;
         _scopeFactory = scopeFactory;
+        _events = events;
         _log = log;
     }
 
@@ -76,5 +80,17 @@ public sealed class BulkWorker : BackgroundService
         var repo  = scope.ServiceProvider.GetRequiredService<IBulkRepository>();
         await state.FinalizeAsync(jobId, status, ct);
         await repo.FinalizeJobAsync(jobId, status, completed, failed, ct);
+
+        try
+        {
+            await _events.PublishAsync(new EventEnvelope(
+                "bulk_completed",
+                new BulkCompletedPayload(jobId),
+                SupplierId: null));
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to publish bulk_completed for {JobId}", jobId);
+        }
     }
 }

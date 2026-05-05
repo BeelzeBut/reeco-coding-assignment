@@ -1,4 +1,5 @@
 using System.Globalization;
+using OrderOps.Api.Features.Events;
 using OrderOps.Api.Infrastructure;
 
 namespace OrderOps.Api.Features.Orders;
@@ -6,8 +7,15 @@ namespace OrderOps.Api.Features.Orders;
 public sealed class OrdersService
 {
     private readonly IOrderRepository _repo;
+    private readonly IEventHub _events;
+    private readonly ILogger<OrdersService> _log;
 
-    public OrdersService(IOrderRepository repo) => _repo = repo;
+    public OrdersService(IOrderRepository repo, IEventHub events, ILogger<OrdersService> log)
+    {
+        _repo = repo;
+        _events = events;
+        _log = log;
+    }
 
     public Task<PagedResult<OrderListItem>> ListAsync(OrderListRequest req, CancellationToken ct)
     {
@@ -67,14 +75,29 @@ public sealed class OrdersService
             throw new ValidationException($"Invalid status '{body.Status}'", "invalid_status");
 
         var outcome = await _repo.UpdateStatusAsync(id, body.Status, ct);
-        return outcome switch
+        switch (outcome)
         {
-            UpdateStatusOutcome.Updated u => u.Order,
-            UpdateStatusOutcome.NotFound => throw new NotFoundException("Order"),
-            UpdateStatusOutcome.AlreadyCancelled => throw new OrderAlreadyCancelledException(),
-            UpdateStatusOutcome.VersionConflict => throw new OptimisticConcurrencyException(),
-            _ => throw new InvalidOperationException("Unknown outcome")
-        };
+            case UpdateStatusOutcome.Updated u:
+                if (!string.Equals(u.OldStatus, u.Order.Status, StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        await _events.PublishAsync(new EventEnvelope(
+                            "order_updated",
+                            new OrderUpdatedPayload(u.Order.Id, u.OldStatus, u.Order.Status, u.Order.UpdatedAt),
+                            u.Order.SupplierId));
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogError(ex, "Failed to publish order_updated for {OrderId}", u.Order.Id);
+                    }
+                }
+                return u.Order;
+            case UpdateStatusOutcome.NotFound: throw new NotFoundException("Order");
+            case UpdateStatusOutcome.AlreadyCancelled: throw new OrderAlreadyCancelledException();
+            case UpdateStatusOutcome.VersionConflict: throw new OptimisticConcurrencyException();
+            default: throw new InvalidOperationException("Unknown outcome");
+        }
     }
 
     private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

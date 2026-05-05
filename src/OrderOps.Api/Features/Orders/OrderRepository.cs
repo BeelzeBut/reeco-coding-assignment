@@ -108,6 +108,7 @@ public sealed class OrderRepository : IOrderRepository
         if (order is null) return new UpdateStatusOutcome.NotFound();
         if (order.Status == OrderStatuses.Cancelled) return new UpdateStatusOutcome.AlreadyCancelled();
 
+        var oldStatus = order.Status;
         order.Status = newStatus;
         order.UpdatedAt = DateTime.UtcNow;
         order.Version += 1;
@@ -123,7 +124,7 @@ public sealed class OrderRepository : IOrderRepository
 
         var detail = await GetDetailAsync(id, ct)
             ?? throw new InvalidOperationException($"Order {id} not found after update");
-        return new UpdateStatusOutcome.Updated(detail);
+        return new UpdateStatusOutcome.Updated(detail, oldStatus);
     }
 
     public async Task<OrderStats> GetStatsAsync(CancellationToken ct)

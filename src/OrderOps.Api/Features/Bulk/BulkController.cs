@@ -17,6 +17,13 @@ public sealed class BulkController : ControllerBase
         return Accepted(response);
     }
 
+    [HttpPost("bulk")]
+    public async Task<IActionResult> SubmitCanonical([FromBody] BulkActionRequest body, CancellationToken ct)
+    {
+        var response = await _service.EnqueueAsync(body, ct);
+        return Accepted(response);
+    }
+
     [HttpPost("bulk-actions")]
     public async Task<IActionResult> SubmitSnakeCase([FromBody] BulkActionsRequest body, CancellationToken ct)
     {
