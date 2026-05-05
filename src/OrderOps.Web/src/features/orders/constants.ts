@@ -1,4 +1,4 @@
-import type { SortField } from "@/features/orders/api";
+import type { BulkAction, SortField } from "@/features/orders/api";
 
 export const ORDER_STATUSES = [
   "pending",
@@ -18,6 +18,36 @@ export const ORDER_WAREHOUSES = [
   "warehouse_west",
   "warehouse_central",
 ] as const;
+
+export const BULK_MAX_BATCH = 10_000;
+
+export interface BulkActionMeta {
+  value: BulkAction;
+  label: string;
+  verb: string;
+  description: string;
+}
+
+export const BULK_ACTIONS: BulkActionMeta[] = [
+  {
+    value: "approve",
+    label: "Approve",
+    verb: "Approve",
+    description: "Set status to approved.",
+  },
+  {
+    value: "reject",
+    label: "Reject",
+    verb: "Reject",
+    description: "Set status to rejected.",
+  },
+  {
+    value: "flag",
+    label: "Flag",
+    verb: "Flag",
+    description: "Tag for review without changing status.",
+  },
+];
 
 export const SORT_OPTIONS: { value: SortField; label: string }[] = [
   { value: "id", label: "Order ID" },

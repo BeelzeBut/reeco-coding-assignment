@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   ArrowDown,
@@ -13,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -26,6 +27,9 @@ import { defaultFilters, listOrders, type OrdersFilters, type SortField } from "
 import { formatCurrency, formatDateTime, statusVariant } from "@/features/orders/format";
 import { OrderDetailSheet } from "@/features/orders/OrderDetailSheet";
 import { OrdersFiltersBar } from "@/features/orders/OrdersFilters";
+import { BulkActionBar } from "@/features/orders/BulkActionBar";
+import { BulkJobToast } from "@/features/orders/BulkJobToast";
+import { useBulkSelection } from "@/features/orders/useBulkSelection";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 25;
@@ -34,6 +38,8 @@ export function OrdersPage() {
   const [filters, setFiltersInternal] = useState<OrdersFilters>(defaultFilters);
   const [offset, setOffset] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selection = useBulkSelection();
+  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
 
   const setFilters = (next: OrdersFilters) => {
     setFiltersInternal(next);
@@ -51,6 +57,15 @@ export function OrdersPage() {
   const end = Math.min(offset + PAGE_SIZE, total);
   const canPrev = offset > 0;
   const canNext = offset + PAGE_SIZE < total;
+
+  const pageRows = query.data?.data ?? [];
+  const pageIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const pageSelectedCount = useMemo(
+    () => pageIds.reduce((n, id) => (selection.isSelected(id) ? n + 1 : n), 0),
+    [pageIds, selection]
+  );
+  const allOnPageSelected = pageIds.length > 0 && pageSelectedCount === pageIds.length;
+  const someOnPageSelected = pageSelectedCount > 0 && !allOnPageSelected;
 
   const toggleSort = (field: SortField) => {
     if (filters.sort === field) {
@@ -84,6 +99,12 @@ export function OrdersPage() {
           onReset={() => setFilters(defaultFilters)}
         />
 
+        <BulkActionBar
+          selectedIds={selection.ids}
+          onClear={selection.clear}
+          onJobSubmitted={(jobId) => setActiveJobIds((prev) => [...prev, jobId])}
+        />
+
         <Card className="overflow-hidden shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b bg-muted/30 py-3">
             <CardTitle className="text-base font-medium">
@@ -107,6 +128,19 @@ export function OrdersPage() {
             <Table>
               <TableHeader className="sticky top-0 z-10 bg-muted/50 backdrop-blur">
                 <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label={
+                        allOnPageSelected ? "Deselect all on page" : "Select all on page"
+                      }
+                      checked={allOnPageSelected}
+                      indeterminate={someOnPageSelected}
+                      disabled={pageIds.length === 0}
+                      onChange={(e) =>
+                        selection.setMany(pageIds, (e.target as HTMLInputElement).checked)
+                      }
+                    />
+                  </TableHead>
                   <SortableHead
                     field="id"
                     filters={filters}
@@ -165,22 +199,35 @@ export function OrdersPage() {
                 {query.isPending &&
                   Array.from({ length: 8 }).map((_, i) => (
                     <TableRow key={`skel-${i}`}>
-                      {Array.from({ length: 8 }).map((__, j) => (
+                      {Array.from({ length: 9 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-full" />
                         </TableCell>
                       ))}
                     </TableRow>
                   ))}
-                {query.data?.data.map((order) => (
+                {query.data?.data.map((order) => {
+                  const checked = selection.isSelected(order.id);
+                  return (
                   <TableRow
                     key={order.id}
                     className={cn(
                       "group cursor-pointer transition-colors",
-                      selectedId === order.id && "bg-primary/5"
+                      selectedId === order.id && "bg-primary/5",
+                      checked && "bg-primary/[0.04]"
                     )}
                     onClick={() => setSelectedId(order.id)}
                   >
+                    <TableCell
+                      className="w-10"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        aria-label={`Select ${order.id}`}
+                        checked={checked}
+                        onChange={() => selection.toggle(order.id)}
+                      />
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{order.id}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
@@ -205,10 +252,11 @@ export function OrdersPage() {
                       {formatDateTime(order.created_at)}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
                 {query.data && query.data.data.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8}>
+                    <TableCell colSpan={9}>
                       <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
                         <Inbox className="h-8 w-8 opacity-50" />
                         <p className="text-sm">No orders match these filters.</p>
@@ -249,6 +297,20 @@ export function OrdersPage() {
       </div>
 
       <OrderDetailSheet orderId={selectedId} onClose={() => setSelectedId(null)} />
+
+      {activeJobIds.length > 0 && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-40 flex flex-col gap-2">
+          {activeJobIds.map((jobId) => (
+            <BulkJobToast
+              key={jobId}
+              jobId={jobId}
+              onDismiss={() =>
+                setActiveJobIds((prev) => prev.filter((id) => id !== jobId))
+              }
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }

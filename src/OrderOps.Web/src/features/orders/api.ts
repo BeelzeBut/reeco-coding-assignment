@@ -98,3 +98,40 @@ export function patchOrder(id: string, body: PatchOrderBody, signal?: AbortSigna
     signal,
   });
 }
+
+export type BulkAction = "approve" | "reject" | "flag";
+
+export interface BulkActionRequest {
+  orderIds: string[];
+  action: BulkAction;
+  reason?: string;
+}
+
+export interface BulkActionResponse {
+  jobId: string;
+}
+
+export function submitBulkAction(body: BulkActionRequest, signal?: AbortSignal) {
+  return apiFetch<BulkActionResponse>("/api/orders/bulk-action", {
+    method: "POST",
+    body: { ...body },
+    signal,
+  });
+}
+
+export type JobStatus = "processing" | "completed" | "failed";
+
+export interface JobProgress {
+  total: number;
+  completed: number;
+  failed: number;
+}
+
+export interface JobStatusResponse {
+  status: JobStatus;
+  progress: JobProgress;
+}
+
+export function getJob(jobId: string, signal?: AbortSignal) {
+  return apiFetch<JobStatusResponse>(`/api/jobs/${encodeURIComponent(jobId)}`, { signal });
+}
