@@ -110,7 +110,7 @@ function SupplierHeader({ supplier }: { supplier: SupplierDetail }) {
             <Badge variant={supplier.active ? "default" : "muted"}>
               {supplier.active ? "active" : "inactive"}
             </Badge>
-            {supplier.rating !== null && (
+            {typeof supplier.rating === "number" && (
               <span className="inline-flex items-center gap-1 text-sm tabular-nums">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                 {supplier.rating.toFixed(1)}

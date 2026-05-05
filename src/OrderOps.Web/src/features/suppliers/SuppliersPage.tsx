@@ -164,7 +164,7 @@ function SupplierRow({
         {supplier.email ?? "—"}
       </TableCell>
       <TableCell className="text-right tabular-nums">
-        {supplier.rating !== null ? (
+        {typeof supplier.rating === "number" ? (
           <span className="inline-flex items-center gap-1">
             <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
             {supplier.rating.toFixed(1)}

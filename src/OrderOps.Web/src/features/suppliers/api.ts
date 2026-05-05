@@ -4,9 +4,9 @@ import type { Paginated } from "@/api/types";
 export interface SupplierListItem {
   id: string;
   name: string;
-  email: string | null;
-  rating: number | null;
-  country: string | null;
+  email?: string;
+  rating?: number;
+  country?: string;
   active: boolean;
   created_at: string;
 }
