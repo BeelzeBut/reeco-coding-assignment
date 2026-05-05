@@ -20,4 +20,11 @@ public sealed class SuppliersService
         if (supplier is null) throw new NotFoundException("Supplier");
         return supplier;
     }
+
+    public async Task<SupplierPerformance> GetPerformanceAsync(string id, CancellationToken ct)
+    {
+        var perf = await _repo.GetPerformanceAsync(id, ct);
+        if (perf is null) throw new NotFoundException("Supplier");
+        return perf;
+    }
 }

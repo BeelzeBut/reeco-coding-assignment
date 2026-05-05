@@ -171,4 +171,66 @@ public sealed class OrderRepository : IOrderRepository
             detailSql, new { id }, cancellationToken: ct));
         return new UpdateStatusOutcome.Updated(detail);
     }
+
+    public async Task<OrderStats> GetStatsAsync(CancellationToken ct)
+    {
+        const string sql = """
+            SELECT count(*)                              AS total_orders,
+                   COALESCE(sum(total_price), 0)         AS total_revenue,
+                   COALESCE(avg(total_price), 0)         AS avg_order_value
+            FROM   orders;
+
+            SELECT status,
+                   count(*)                              AS count,
+                   COALESCE(sum(total_price), 0)         AS total_value
+            FROM   orders
+            GROUP  BY status;
+
+            SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month,
+                   count(*)                              AS order_count,
+                   COALESCE(sum(total_price), 0)         AS revenue
+            FROM   orders
+            GROUP  BY date_trunc('month', created_at)
+            ORDER  BY date_trunc('month', created_at);
+
+            SELECT o.supplier_id,
+                   s.name                                AS supplier_name,
+                   COALESCE(sum(o.total_price), 0)       AS total_revenue
+            FROM   orders o
+            JOIN   suppliers s ON s.id = o.supplier_id
+            GROUP  BY o.supplier_id, s.name
+            ORDER  BY total_revenue DESC
+            LIMIT  10;
+
+            SELECT COALESCE(warehouse, 'unassigned')     AS warehouse,
+                   count(*)                              AS count,
+                   COALESCE(sum(total_price), 0)         AS total_value
+            FROM   orders
+            GROUP  BY COALESCE(warehouse, 'unassigned')
+            ORDER  BY warehouse;
+            """;
+
+        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        await using var grid = await conn.QueryMultipleAsync(new CommandDefinition(
+            sql, cancellationToken: ct));
+
+        var totals = await grid.ReadSingleAsync<(long total_orders, decimal total_revenue, decimal avg_order_value)>();
+        var byStatusRows = (await grid.ReadAsync<(string status, long count, decimal total_value)>()).AsList();
+        var byMonth = (await grid.ReadAsync<ByMonthBucket>()).AsList();
+        var topSuppliers = (await grid.ReadAsync<TopSupplier>()).AsList();
+        var byWarehouse = (await grid.ReadAsync<ByWarehouseBucket>()).AsList();
+
+        var byStatus = byStatusRows.ToDictionary(
+            r => r.status,
+            r => new ByStatusBucket(r.count, r.total_value));
+
+        return new OrderStats(
+            totals.total_orders,
+            totals.total_revenue,
+            decimal.Round(totals.avg_order_value, 2),
+            byStatus,
+            byMonth,
+            topSuppliers,
+            byWarehouse);
+    }
 }

@@ -17,4 +17,8 @@ public sealed class SuppliersController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(string id, CancellationToken ct)
         => Ok(await _service.GetByIdAsync(id, ct));
+
+    [HttpGet("{id}/performance")]
+    public async Task<IActionResult> Performance(string id, CancellationToken ct)
+        => Ok(await _service.GetPerformanceAsync(id, ct));
 }

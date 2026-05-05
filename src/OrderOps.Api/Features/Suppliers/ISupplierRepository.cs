@@ -6,4 +6,5 @@ public interface ISupplierRepository
 {
     Task<PagedResult<SupplierListItem>> ListAsync(int limit, int offset, CancellationToken ct);
     Task<SupplierDetail?> GetByIdAsync(string id, CancellationToken ct);
+    Task<SupplierPerformance?> GetPerformanceAsync(string id, CancellationToken ct);
 }

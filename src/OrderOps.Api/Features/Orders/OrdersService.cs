@@ -35,6 +35,8 @@ public sealed class OrdersService
         return order;
     }
 
+    public Task<OrderStats> GetStatsAsync(CancellationToken ct) => _repo.GetStatsAsync(ct);
+
     public async Task<OrderDetail> UpdateStatusAsync(string id, PatchOrderRequest body, CancellationToken ct)
     {
         if (body.Status is null)

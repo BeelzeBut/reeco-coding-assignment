@@ -14,6 +14,10 @@ public sealed class OrdersController : ControllerBase
     public async Task<IActionResult> List([FromQuery] OrderListRequest query, CancellationToken ct)
         => Ok(await _service.ListAsync(query, ct));
 
+    [HttpGet("stats")]
+    public async Task<IActionResult> Stats(CancellationToken ct)
+        => Ok(await _service.GetStatsAsync(ct));
+
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(string id, CancellationToken ct)
         => Ok(await _service.GetByIdAsync(id, ct));
