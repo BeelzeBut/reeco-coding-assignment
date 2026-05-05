@@ -7,6 +7,7 @@ import {
   CircleDollarSign,
   Clock,
   FileText,
+  Flag,
   Hash,
   Package,
   Tag,
@@ -89,6 +90,23 @@ export function OrderDetailSheet({ orderId, onClose }: OrderDetailSheetProps) {
 function DetailContent({ order, onClose }: { order: OrderDetail; onClose: () => void }) {
   return (
     <>
+      {order.flagged_at && (
+        <section className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 shadow-sm dark:bg-amber-950/30">
+          <div className="mb-1.5 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-400">
+            <Flag className="h-4 w-4 fill-amber-400/40 text-amber-500" />
+            Flagged for review
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {formatDateTime(order.flagged_at)}
+          </div>
+          {order.flag_reason && (
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground/90">
+              {order.flag_reason}
+            </p>
+          )}
+        </section>
+      )}
+
       <Section icon={<Building2 className="h-4 w-4" />} title="Supplier">
         <div className="font-medium">{order.supplier_name}</div>
         <Link

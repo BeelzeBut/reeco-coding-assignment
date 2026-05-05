@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
+  Flag,
   Inbox,
   Package,
   TrendingUp,
@@ -230,7 +231,12 @@ export function OrdersPage() {
                         onChange={() => selection.toggle(order.id)}
                       />
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{order.id}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <span className="inline-flex items-center gap-1.5">
+                        {order.id}
+                        {order.flagged_at && <FlagIndicator reason={order.flag_reason} />}
+                      </span>
+                    </TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(order.status)}>{order.status}</Badge>
                     </TableCell>
@@ -360,6 +366,24 @@ const PRIORITY_COLOR: Record<string, string> = {
   high: "bg-amber-400",
   critical: "bg-red-500",
 };
+
+function FlagIndicator({ reason }: { reason: string | null }) {
+  const text = reason?.trim() || "Flagged for review";
+  return (
+    <span className="group relative inline-flex">
+      <Flag
+        aria-label={`Flagged: ${text}`}
+        className="h-3 w-3 fill-amber-400/40 text-amber-500"
+      />
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 hidden max-w-xs -translate-x-1/2 whitespace-pre-wrap break-words rounded-md border bg-popover px-2.5 py-1.5 text-left text-xs font-normal normal-case text-popover-foreground shadow-md group-hover:block group-focus-within:block"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
 
 function PriorityDot({ priority }: { priority: string }) {
   return (

@@ -67,7 +67,9 @@ public sealed class OrderRepository : IOrderRepository
             .Select(o => new OrderListItem(
                 o.Id, o.SupplierId, o.ProductId, o.Quantity, o.UnitPrice, o.TotalPrice,
                 o.Status, o.Priority, o.CreatedAt, o.UpdatedAt, o.Warehouse, o.Notes,
-                o.Product.Name))
+                o.Product.Name,
+                o.Flag != null ? (DateTime?)o.Flag.FlaggedAt : null,
+                o.Flag != null ? o.Flag.Reason : null))
             .ToListAsync(ct);
 
         return new PagedResult<OrderListItem>(rows, total, q.Limit, q.Offset);
@@ -98,7 +100,8 @@ public sealed class OrderRepository : IOrderRepository
                 o.Id, o.SupplierId, o.ProductId, o.Quantity, o.UnitPrice, o.TotalPrice,
                 o.Status, o.Priority, o.CreatedAt, o.UpdatedAt, o.Warehouse, o.Notes,
                 o.Supplier.Name, o.Product.Name,
-                o.Flag != null ? (DateTime?)o.Flag.FlaggedAt : null))
+                o.Flag != null ? (DateTime?)o.Flag.FlaggedAt : null,
+                o.Flag != null ? o.Flag.Reason : null))
             .FirstOrDefaultAsync(ct);
     }
 

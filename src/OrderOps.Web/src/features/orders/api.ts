@@ -15,6 +15,8 @@ export interface OrderListItem {
   warehouse: string | null;
   notes: string | null;
   product_name: string;
+  flagged_at: string | null;
+  flag_reason: string | null;
 }
 
 export interface OrderDetail extends OrderListItem {

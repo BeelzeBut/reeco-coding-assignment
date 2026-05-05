@@ -15,7 +15,9 @@ public sealed record OrderListItem(
     DateTime UpdatedAt,
     string? Warehouse,
     string? Notes,
-    string ProductName);
+    string ProductName,
+    DateTime? FlaggedAt,
+    string? FlagReason);
 
 public sealed record OrderDetail(
     string Id,
@@ -32,7 +34,8 @@ public sealed record OrderDetail(
     string? Notes,
     string SupplierName,
     string ProductName,
-    DateTime? FlaggedAt);
+    DateTime? FlaggedAt,
+    string? FlagReason);
 
 public sealed record PatchOrderRequest(string? Status, string? Priority, string? Notes);
 
