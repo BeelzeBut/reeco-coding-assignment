@@ -49,10 +49,33 @@ Build a procurement order-management dashboard:
 | Query helper | **Dapper** | Thin micro-ORM; keeps SQL explicit, mapping ergonomic |
 | Cache / Pub-Sub / Queue | **StackExchange.Redis** | Used for async job state and event fan-out |
 | Database | **Postgres 16** | Provided by `docker-compose.yml` |
-| Frontend | **Vite + React + TypeScript** | Tailwind for layout, TanStack Query for server state, Recharts for analytics charts. SPA only — no SSR. |
+| Frontend | **Vite + React + TypeScript** | Tailwind v3.4 + **shadcn/ui** for components, TanStack Query for server state, Recharts for analytics charts, React Router for the 4 views. SPA only — no SSR. |
 
 **NuGet packages already installed in `src/OrderOps.Api`:**
 `Npgsql`, `Dapper`, `StackExchange.Redis`, `Microsoft.AspNetCore.OpenApi` (default).
+
+**NuGet packages installed in `src/OrderOps.Importer`:**
+`Npgsql`, `CsvHelper`, `Microsoft.Extensions.Hosting`.
+
+**npm packages installed in `src/OrderOps.Web`** (pinned to majors):
+
+| Package | Version | Role |
+|---|---|---|
+| `vite` + `@vitejs/plugin-react` | ^5.4 | Dev server + bundler |
+| `react`, `react-dom` | ^18.3 | UI library |
+| `typescript` | ^5.5 | Type system |
+| `tailwindcss` + `postcss` + `autoprefixer` | ^3.4 / ^8.4 / ^10.4 | Utility CSS toolchain |
+| `tailwindcss-animate` | ^1.0 | shadcn animation peer |
+| `class-variance-authority`, `clsx`, `tailwind-merge` | latest | shadcn variant + `cn()` helper |
+| `lucide-react` | ^0.460 | shadcn icon set |
+| `@tanstack/react-query` | ^5.59 | Server state + caching |
+| `recharts` | ^2.13 | Analytics charts |
+| `react-router-dom` | ^6.26 | Routing across 4 views |
+| `vite-tsconfig-paths` | ^5.0 | `@/*` → `src/*` path alias |
+
+shadcn/ui is **not** an npm dep — its components (`button`, `card`, `skeleton`) are committed at `src/components/ui/`. Adding new primitives in future slices: `npx shadcn@latest add <name>`.
+
+**Theme:** slate base + emerald accent, 10px radius, Inter typeface, soft shadows, 150ms transitions. Tri-state (light / dark / system) toggle in the nav, persisted to `localStorage`. Full rules in [`docs/ui-design.md`](./ui-design.md) — binding for any UI change, on the same gate as `coding-principles.md`.
 
 ---
 
@@ -66,6 +89,7 @@ candidate-package/
 ├── docs/                      ← ALL project docs live here
 │   ├── architecture.md        ← THIS FILE — AI working context
 │   ├── coding-principles.md   ← binding rules the AI must follow
+│   ├── ui-design.md           ← binding rules for any frontend visual change
 │   ├── ARCHITECTURE.md        ← (future) deliverable for human reviewers
 │   └── ANOMALY_STRATEGY.md    ← (future) deliverable for anomaly rules + severity
 ├── .claude/
@@ -85,16 +109,34 @@ candidate-package/
     │   │                        service + repository + DTOs
     │   ├── Infrastructure/    ← Npgsql connection factory, Redis client, error
     │   │                        middleware, cache invalidation
-    │   ├── schema.sql         ← canonical schema, applied by Importer
+    │   ├── schema.sql         ← canonical DDL (DROP + CREATE); owned by Api,
+    │   │                        applied by Importer via msbuild <Link>
     │   ├── appsettings.json   ← Postgres + Redis connection strings
     │   └── Properties/launchSettings.json
     ├── OrderOps.Importer/     ← console app: applies schema, COPYs CSVs, idempotent
-    │   ├── Program.cs
+    │   ├── Program.cs         ← reads ../OrderOps.Api/schema.sql via output Link
+    │   ├── appsettings.json
     │   └── OrderOps.Importer.csproj
-    └── OrderOps.Web/          ← Vite + React + TS frontend (see §3)
+    └── OrderOps.Web/          ← Vite + React + TS + Tailwind + shadcn/ui SPA
+        ├── package.json       ← scripts: dev, build, typecheck
+        ├── vite.config.ts     ← /api/* → http://localhost:3000 dev proxy
+        ├── tsconfig.json + tsconfig.app.json + tsconfig.node.json
+        ├── tailwind.config.js + postcss.config.js
+        ├── components.json    ← shadcn config (slate base, CSS variables)
+        ├── index.html
+        └── src/
+            ├── main.tsx       ← QueryClientProvider + RouterProvider
+            ├── App.tsx        ← top-nav layout + <Outlet />
+            ├── routes.tsx     ← /orders (default), /stats, /suppliers, /suppliers/:id
+            ├── index.css      ← @tailwind + shadcn CSS variables
+            ├── vite-env.d.ts
+            ├── lib/           ← cn() helper + queryClient
+            ├── api/           ← fetch wrapper + ApiError + Paginated<T>
+            ├── components/ui/ ← shadcn primitives (button, card so far)
+            └── features/      ← orders/, stats/, suppliers/ — group-by-feature
 ```
 
-SOLID boundaries come from feature folders inside `OrderOps.Api`, not extra csprojs. The Importer is a separate project so reviewers can see CSV ingestion as a deliberate, isolated tool runnable via `dotnet run --project src/OrderOps.Importer`.
+SOLID boundaries come from feature folders inside `OrderOps.Api`, not extra csprojs. The Importer is a separate project so reviewers can see CSV ingestion as a deliberate, isolated tool runnable via `dotnet run --project src/OrderOps.Importer`. The frontend mirrors the same group-by-feature shape under `src/OrderOps.Web/src/features/`.
 
 ---
 
@@ -104,10 +146,10 @@ The CSV columns are fixed; type choices below are confirmed against the actual d
 
 | Table | CSV columns | Notes / edge cases (from README §Tips + data inspection) |
 |---|---|---|
-| `orders` | `id, supplier_id, product_id, quantity, unit_price, total_price, status, priority, created_at, updated_at, warehouse, notes` | ~2% have `total_price ≠ quantity*unit_price`; ~200 have `updated_at < created_at`; some `quantity < 0` (returns, down to −49); 1 row has empty `warehouse` → NULL; XSS payloads (`<script>…`, `onmouseover=…`) in `notes` |
+| `orders` | `id, supplier_id, product_id, quantity, unit_price, total_price, status, priority, created_at, updated_at, warehouse, notes` | ~2% have `total_price ≠ quantity*unit_price`; **208 rows** have `updated_at < created_at`; **507 rows** have `quantity < 0` (returns, down to −49); **1,512 rows** have empty `warehouse` (loaded as NULL); XSS payloads (`<script>…`, `onmouseover=…`) in `notes` |
 | `suppliers` | `id, name, email, rating, country, active, created_at` | `active` is `true`/`false` text → boolean; ~37 country codes including non-ISO variants (DEN, GER, BRZ); duplicate name variations |
-| `products` | `id, name, category_id, sku, price` | `price` = catalog/base price; used by `price_consistency` & `price_spike` rules |
-| `categories` | `id, name, parent_id` | Hierarchical; `parent_id` empty for roots; **real cycle in seed at `cat_150↔151↔152`** — must guard the recursive descent (Postgres self-FKs do NOT prevent cycles) |
+| `products` | `id, name, category_id, sku, price` | `price` = catalog/base price; used by `price_consistency` & `price_spike` rules. **81 rows reference non-existent `cat_200`** — the importer NULL-coerces these `category_id`s at parse time so the FK stays enforced for genuine bugs (see §8.4) |
+| `categories` | `id, name, parent_id` | Hierarchical; `parent_id` empty for roots; **real cycle in seed at `cat_150↔151↔152`** — must guard the recursive descent (Postgres self-FKs do NOT prevent cycles). `expected-values.json` asserts `counts.categories: 193` (vs. 195 rows in CSV); the API surface must filter 2 rows out — exact rule is TBD when category endpoint is implemented |
 
 **Valid order statuses:** `pending, approved, rejected, shipped, delivered, cancelled`.
 
@@ -296,12 +338,16 @@ Decisions below are confirmed and unblocked. Implementation must follow them; de
 ### 8.4 CSV Import — `OrderOps.Importer` console, truncate-and-COPY, idempotent
 
 - Run as `dotnet run --project src/OrderOps.Importer`.
-- Steps inside one transaction:
-  1. Apply `schema.sql` (uses `CREATE TABLE IF NOT EXISTS` form so re-runs are no-ops).
-  2. `SET CONSTRAINTS ALL DEFERRED;`
-  3. `TRUNCATE orders, products, suppliers, categories RESTART IDENTITY CASCADE;`
-  4. `COPY` each CSV via Npgsql `BeginBinaryImport` — fastest path for 50k orders. Empty `warehouse` → `NULL` at parse time.
-- Re-running is safe: tests can drop and reload state freely. Importer prints row counts on completion and exits non-zero if any count mismatches the CSV header parse.
+- Steps:
+  1. Apply `schema.sql` — `DROP TABLE IF EXISTS … CASCADE` followed by `CREATE TABLE …`. The drop-and-create shape (rather than `CREATE TABLE IF NOT EXISTS` + `TRUNCATE`) means schema changes during development always take effect on the next import; no migration framework is needed for a take-home where the only data source is the CSVs themselves. **Schema ownership:** the file lives in `src/OrderOps.Api/schema.sql` (canonical home for DB DDL). The Importer's csproj uses `<None Include="..\OrderOps.Api\schema.sql" Link="schema.sql" CopyToOutputDirectory="Always" />` to ship it next to its binary. The Api itself never reads the file at runtime — it consumes the resulting tables.
+  2. Open a single transaction and `SET CONSTRAINTS ALL DEFERRED` so the deferred `categories.parent_id` self-FK is only checked at commit (CSV row order is unconstrained).
+  3. `COPY` each CSV via Npgsql `BeginBinaryImportAsync` in FK-safe order: categories → suppliers → products → orders. Fastest path for 50k orders. Empty CSV string fields → `NULL` for all nullable columns; `version` is seeded at `1`.
+  4. Commit. Orphan `parent_id` rejection runs here. Cycles in seed data (`cat_150↔151↔152`) load fine — they remain a query-time concern (§5.1).
+  5. `SELECT COUNT(*)` per table; exit non-zero if any count mismatches what was parsed.
+- CSV parsing uses **CsvHelper** so quoted fields containing the seeded XSS payloads (`<script>…`, `onmouseover=…`) round-trip correctly.
+- **Pre-COPY orphan fixup (products → categories):** before the products `COPY`, the importer builds a `HashSet<string>` of valid category IDs and rewrites any orphan `category_id` to `NULL`. The current seed has 81 such rows (all pointing at the missing `cat_200`); the importer logs the count. This preserves correctness — the FK remains enforced and the DB never holds dangling pointers — at the price of erasing the original literal `cat_200` reference for those 81 products. The alternatives (drop the FK; insert a sentinel `cat_200` row) were rejected because the first weakens future bug-catching and the second invents data and would inflate the categories row count.
+- Connection string is sourced from the Importer's `appsettings.json` (`ConnectionStrings:Postgres`); standard `Host.CreateApplicationBuilder` env-var override (`ConnectionStrings__Postgres`) applies.
+- Re-running is safe and idempotent against the data files.
 
 ### 8.5 Validation & Errors
 - Single error envelope `{ error, code }`. Do not expose stack traces.
@@ -354,6 +400,10 @@ The full rubric (with worked examples) lives in `docs/ANOMALY_STRATEGY.md`, writ
 - [x] Server listens on port 3000 (`GET /healthz` returns `{"status":"ok"}`)
 - [x] `appsettings.json` has `ConnectionStrings.Postgres` and `ConnectionStrings.Redis`
 - [x] **2026-05-04** — Architecture decisions §10.1–§10.8 resolved; §8.1–§8.8 promoted from PENDING; schema (§5) and indexes (§5.2) locked.
+- [x] **2026-05-05** — `OrderOps.Importer` shipped; schema applied; 195 categories / 500 suppliers / 5,000 products / 50,000 orders loaded into Postgres via binary COPY. CSV parsing via CsvHelper.
+- [x] **2026-05-05** — `OrderOps.Web` scaffold shipped; Vite + React + TS + Tailwind v3.4 + shadcn/ui + TanStack Query + Recharts + React Router. Vite dev proxy `/api → :3000` verified end-to-end through `/api/healthz` (added to API alongside `/healthz`). Placeholder pages render at all 4 routes; `npm run build` and `tsc --noEmit` pass clean.
+- [x] **2026-05-05** — Theme + design rules locked. `docs/ui-design.md` written (binding); slate + emerald palette, 10px radius, Inter typeface, soft shadows, 150ms transitions. `ThemeProvider` + tri-state toggle (light/dark/system) in the nav with `localStorage` persistence and pre-paint flash-prevention script in `index.html`. `Skeleton` primitive added; `OrdersPage` uses it for the loading state.
+- [x] **2026-05-05** — Basic-CRUD slice landed. Backend foundation in place: feature folders (`Features/Orders|Suppliers|Products`) + `Infrastructure/`, snake_case JSON, error-envelope middleware (`{error, code}`), DI for `NpgsqlDataSource` (singleton, pooled) and `IConnectionMultiplexer` (lazy reconnect, no consumers yet), Dapper `MatchNamesWithUnderscores=true`. 7 endpoints implemented per §6.1 (orders list/detail/PATCH with full §8.1 optimistic-lock; suppliers list/detail with computed `order_count`/`total_revenue`; products list with cycle-guarded recursive category descent — `id::text` cast on the CTE path to satisfy PG type unification). `tests/basic-crud.test.ts` 15/15 green; build clean.
 
 ---
 
