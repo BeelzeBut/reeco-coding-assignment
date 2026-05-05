@@ -2,7 +2,7 @@
 
 A procurement order-management dashboard: a .NET 9 / ASP.NET Core REST API on port 3000 backed by Postgres 16 and Redis 7, with a Vite + React + TypeScript SPA consuming it. Fifty thousand orders, five hundred suppliers, five thousand products, and 195 categories are seeded from CSV by a separate console importer. The contract is locked by the test suite (`tests/`, 83 tests / 115 pts); when README and tests disagreed, the tests won.
 
-This document is the deliverable for human reviewers and is intentionally narrative. The full anomaly-rule and severity rationale lives in [`docs/ANOMALY_STRATEGY.md`](./ANOMALY_STRATEGY.md). Security threat model and control inventory are in [`docs/SECURITY.md`](./SECURITY.md). The AI working context (decision log, daily checkpoints) is in [`docs/ai-architecture.md`](./ai-architecture.md). Provisional decisions awaiting PO review are in [`docs/pending-decisions.md`](./pending-decisions.md).
+This document is the deliverable for human reviewers and is intentionally narrative. The full anomaly-rule and severity rationale lives in [`docs/ANOMALY_STRATEGY.md`](./ANOMALY_STRATEGY.md). Security threat model and control inventory are in [`docs/SECURITY.md`](./SECURITY.md). The AI working context (decision log, daily checkpoints) is in [`docs/ai-architecture.md`](./ai-architecture.md). Provisional decisions awaiting PO review are in [`docs/pending-decisions.md`](./pending-decisions.md). The full Claude Code session history that produced this codebase is preserved as JSONL under [`docs/transcripts/`](./transcripts/) — see §12.
 
 ---
 
@@ -268,3 +268,21 @@ A few decisions that warrant honest naming:
 - **Supplier-local time for `after_hours`.** Currently UTC, which over-flags suppliers in non-UTC timezones. Joining `suppliers.country` to an IANA-zone map is the obvious fix; described further in `docs/ANOMALY_STRATEGY.md`.
 - **Observability.** Structured logs are in place; metrics (Prometheus / OpenTelemetry) and tracing across the request → worker → SSE chain are not. For a real production rollout this is the first thing I'd add.
 - **Resolve the bulk-URL wart.** Pick one URL, one casing, deprecate the others, update the brief. Awaiting PO input.
+
+---
+
+## 12. AI chat transcripts
+
+The full Claude Code session history that produced this codebase is preserved under [`docs/transcripts/`](./transcripts/) for reviewer audit — verbatim Claude Code session logs in JSONL, one file per session, including every user prompt, assistant reply, and tool call/result. Readable with any JSONL viewer, or re-openable in Claude Code via `claude --resume <session-id>`. To find user-typed prompts in an editor, regex-search for `"role":"user","content":"(?!<command-|<local-command-|\[Request)`.
+
+Filenames are prefixed with the session start time (`YYYY-MM-DD_HHMM_`) so chronological order matches build order. Sessions, in order:
+
+| # | Date / time (UTC) | Topic |
+|---|---|---|
+| 1 | 2026-05-04 12:58 | Project bootstrap, .NET vs Node decision, initial `ARCHITECTURE.md` draft |
+| 2 | 2026-05-04 13:45 | Resolving architecture open questions |
+| 3 | 2026-05-05 08:57 | Backend API CRUD + project structure (DI, middleware, controllers) |
+| 4 | 2026-05-05 09:31 | Filtering slice tests — parallel agent on `tests/filtering.test.ts` |
+| 5 | 2026-05-05 16:19 | State review + multi-select bulk actions feature |
+| 6 | 2026-05-05 16:24 | Frontend polish (logo, branding, scroll restoration) |
+| 7 | 2026-05-05 17:38 | Self-review document + flagged-orders UI tooltip |
