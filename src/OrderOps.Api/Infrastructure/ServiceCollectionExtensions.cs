@@ -1,5 +1,6 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using OrderOps.Api.Data;
 using OrderOps.Api.Features.Bulk;
 using OrderOps.Api.Features.Orders;
 using OrderOps.Api.Features.Products;
@@ -15,10 +16,9 @@ public static class ServiceCollectionExtensions
         var connStr = cfg.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
 
-        DefaultTypeMap.MatchNamesWithUnderscores = true;
-
         var dataSource = new NpgsqlDataSourceBuilder(connStr).Build();
         services.AddSingleton(dataSource);
+        services.AddDbContext<AppDbContext>(opts => opts.UseNpgsql(dataSource));
         return services;
     }
 

@@ -1,235 +1,187 @@
-using Dapper;
-using Npgsql;
+using Microsoft.EntityFrameworkCore;
+using OrderOps.Api.Data;
+using OrderOps.Api.Data.Entities;
 using OrderOps.Api.Infrastructure;
 
 namespace OrderOps.Api.Features.Orders;
 
 public sealed class OrderRepository : IOrderRepository
 {
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly AppDbContext _db;
 
-    public OrderRepository(NpgsqlDataSource dataSource) => _dataSource = dataSource;
+    public OrderRepository(AppDbContext db) => _db = db;
 
-    private const string DetailColumns = """
-        o.id, o.supplier_id, o.product_id, o.quantity, o.unit_price, o.total_price,
-        o.status, o.priority, o.created_at, o.updated_at, o.warehouse, o.notes,
-        s.name AS supplier_name, p.name AS product_name, of.flagged_at AS flagged_at
-        """;
-
-    private const string ListColumns = """
-        o.id, o.supplier_id, o.product_id, o.quantity, o.unit_price, o.total_price,
-        o.status, o.priority, o.created_at, o.updated_at, o.warehouse, o.notes,
-        p.name AS product_name
-        """;
-
-    // Whitelist: API field name → SQL column. Anything not in this map falls back to o.id.
     private static readonly IReadOnlyDictionary<string, string> SortColumns =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["id"]          = "o.id",
-            ["created_at"]  = "o.created_at",
-            ["updated_at"]  = "o.updated_at",
-            ["total_price"] = "o.total_price",
-            ["unit_price"]  = "o.unit_price",
-            ["quantity"]    = "o.quantity",
-            ["status"]      = "o.status",
-            ["priority"]    = "o.priority",
-            ["supplier_id"] = "o.supplier_id",
-            ["warehouse"]   = "o.warehouse",
+            ["id"] = "Id",
+            ["created_at"] = "CreatedAt",
+            ["updated_at"] = "UpdatedAt",
+            ["total_price"] = "TotalPrice",
+            ["unit_price"] = "UnitPrice",
+            ["quantity"] = "Quantity",
+            ["status"] = "Status",
+            ["priority"] = "Priority",
+            ["supplier_id"] = "SupplierId",
+            ["warehouse"] = "Warehouse",
         };
 
     public async Task<PagedResult<OrderListItem>> ListAsync(OrderListQuery q, CancellationToken ct)
     {
-        var (where, parameters) = BuildWhere(q);
-        var sortCol = q.Sort is not null && SortColumns.TryGetValue(q.Sort, out var c) ? c : "o.id";
-        var sortDir = string.Equals(q.Order, "desc", StringComparison.OrdinalIgnoreCase) ? "DESC" : "ASC";
-        var countJoin = string.IsNullOrEmpty(q.Search) ? "" : "JOIN products p ON p.id = o.product_id";
-
-        parameters.Add("limit", q.Limit);
-        parameters.Add("offset", q.Offset);
-
-        var sql = $"""
-            SELECT {ListColumns}
-            FROM   orders o
-            JOIN   products p ON p.id = o.product_id
-            {where}
-            ORDER  BY {sortCol} {sortDir}, o.id
-            LIMIT  @limit OFFSET @offset;
-
-            SELECT count(*)
-            FROM   orders o
-            {countJoin}
-            {where};
-            """;
-
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var grid = await conn.QueryMultipleAsync(new CommandDefinition(
-            sql, parameters, cancellationToken: ct));
-
-        var rows = (await grid.ReadAsync<OrderListItem>()).AsList();
-        var total = await grid.ReadSingleAsync<long>();
-        return new PagedResult<OrderListItem>(rows, total, q.Limit, q.Offset);
-    }
-
-    private static (string Where, DynamicParameters P) BuildWhere(OrderListQuery q)
-    {
-        var clauses = new List<string>();
-        var p = new DynamicParameters();
+        var query = _db.Orders.AsNoTracking().Include(o => o.Product).AsQueryable();
 
         if (q.Statuses is { Count: > 0 })
         {
-            clauses.Add("o.status = ANY(@statuses)");
-            p.Add("statuses", q.Statuses.ToArray());
+            var statuses = q.Statuses.ToArray();
+            query = query.Where(o => statuses.Contains(o.Status));
         }
         if (!string.IsNullOrEmpty(q.Priority))
-        {
-            clauses.Add("o.priority = @priority");
-            p.Add("priority", q.Priority);
-        }
+            query = query.Where(o => o.Priority == q.Priority);
         if (!string.IsNullOrEmpty(q.SupplierId))
-        {
-            clauses.Add("o.supplier_id = @supplier_id");
-            p.Add("supplier_id", q.SupplierId);
-        }
+            query = query.Where(o => o.SupplierId == q.SupplierId);
         if (!string.IsNullOrEmpty(q.Warehouse))
-        {
-            clauses.Add("o.warehouse = @warehouse");
-            p.Add("warehouse", q.Warehouse);
-        }
+            query = query.Where(o => o.Warehouse == q.Warehouse);
         if (q.DateFrom.HasValue)
-        {
-            clauses.Add("o.created_at >= @date_from");
-            p.Add("date_from", q.DateFrom.Value);
-        }
+            query = query.Where(o => o.CreatedAt >= q.DateFrom.Value);
         if (q.DateTo.HasValue)
         {
-            clauses.Add("o.created_at < @date_to + interval '1 day'");
-            p.Add("date_to", q.DateTo.Value);
+            var upper = q.DateTo.Value.AddDays(1);
+            query = query.Where(o => o.CreatedAt < upper);
         }
         if (q.MinTotal.HasValue)
-        {
-            clauses.Add("o.total_price >= @min_total");
-            p.Add("min_total", q.MinTotal.Value);
-        }
+            query = query.Where(o => o.TotalPrice >= q.MinTotal.Value);
         if (!string.IsNullOrEmpty(q.Search))
         {
-            clauses.Add("p.name ILIKE '%' || @search || '%'");
-            p.Add("search", q.Search);
+            var pattern = "%" + q.Search + "%";
+            query = query.Where(o => EF.Functions.ILike(o.Product.Name, pattern));
         }
 
-        var where = clauses.Count == 0 ? "" : "WHERE " + string.Join(" AND ", clauses);
-        return (where, p);
+        var sortKey = q.Sort is not null && SortColumns.TryGetValue(q.Sort, out var c) ? c : "Id";
+        var desc = string.Equals(q.Order, "desc", StringComparison.OrdinalIgnoreCase);
+        query = ApplySort(query, sortKey, desc);
+
+        var total = await query.LongCountAsync(ct);
+
+        var rows = await query
+            .Skip(q.Offset).Take(q.Limit)
+            .Select(o => new OrderListItem(
+                o.Id, o.SupplierId, o.ProductId, o.Quantity, o.UnitPrice, o.TotalPrice,
+                o.Status, o.Priority, o.CreatedAt, o.UpdatedAt, o.Warehouse, o.Notes,
+                o.Product.Name))
+            .ToListAsync(ct);
+
+        return new PagedResult<OrderListItem>(rows, total, q.Limit, q.Offset);
     }
 
-    public async Task<OrderDetail?> GetByIdAsync(string id, CancellationToken ct)
+    private static IQueryable<Order> ApplySort(IQueryable<Order> q, string key, bool desc) => key switch
     {
-        var sql = $"""
-            SELECT {DetailColumns}
-            FROM   orders o
-            JOIN   suppliers s ON s.id = o.supplier_id
-            JOIN   products  p ON p.id = o.product_id
-            LEFT JOIN order_flags of ON of.order_id = o.id
-            WHERE  o.id = @id;
-            """;
+        "CreatedAt"   => (desc ? q.OrderByDescending(o => o.CreatedAt)   : q.OrderBy(o => o.CreatedAt)).ThenBy(o => o.Id),
+        "UpdatedAt"   => (desc ? q.OrderByDescending(o => o.UpdatedAt)   : q.OrderBy(o => o.UpdatedAt)).ThenBy(o => o.Id),
+        "TotalPrice"  => (desc ? q.OrderByDescending(o => o.TotalPrice)  : q.OrderBy(o => o.TotalPrice)).ThenBy(o => o.Id),
+        "UnitPrice"   => (desc ? q.OrderByDescending(o => o.UnitPrice)   : q.OrderBy(o => o.UnitPrice)).ThenBy(o => o.Id),
+        "Quantity"    => (desc ? q.OrderByDescending(o => o.Quantity)    : q.OrderBy(o => o.Quantity)).ThenBy(o => o.Id),
+        "Status"      => (desc ? q.OrderByDescending(o => o.Status)      : q.OrderBy(o => o.Status)).ThenBy(o => o.Id),
+        "Priority"    => (desc ? q.OrderByDescending(o => o.Priority)    : q.OrderBy(o => o.Priority)).ThenBy(o => o.Id),
+        "SupplierId"  => (desc ? q.OrderByDescending(o => o.SupplierId)  : q.OrderBy(o => o.SupplierId)).ThenBy(o => o.Id),
+        "Warehouse"   => (desc ? q.OrderByDescending(o => o.Warehouse)   : q.OrderBy(o => o.Warehouse)).ThenBy(o => o.Id),
+        _             => desc ? q.OrderByDescending(o => o.Id) : q.OrderBy(o => o.Id),
+    };
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        return await conn.QuerySingleOrDefaultAsync<OrderDetail>(new CommandDefinition(
-            sql, new { id }, cancellationToken: ct));
+    public Task<OrderDetail?> GetByIdAsync(string id, CancellationToken ct)
+        => GetDetailAsync(id, ct);
+
+    private async Task<OrderDetail?> GetDetailAsync(string id, CancellationToken ct)
+    {
+        return await _db.Orders.AsNoTracking()
+            .Where(o => o.Id == id)
+            .Select(o => new OrderDetail(
+                o.Id, o.SupplierId, o.ProductId, o.Quantity, o.UnitPrice, o.TotalPrice,
+                o.Status, o.Priority, o.CreatedAt, o.UpdatedAt, o.Warehouse, o.Notes,
+                o.Supplier.Name, o.Product.Name,
+                o.Flag != null ? (DateTime?)o.Flag.FlaggedAt : null))
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<UpdateStatusOutcome> UpdateStatusAsync(string id, string newStatus, CancellationToken ct)
     {
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == id, ct);
+        if (order is null) return new UpdateStatusOutcome.NotFound();
+        if (order.Status == OrderStatuses.Cancelled) return new UpdateStatusOutcome.AlreadyCancelled();
 
-        var current = await conn.QuerySingleOrDefaultAsync<(string status, int version)?>(
-            new CommandDefinition("SELECT status, version FROM orders WHERE id = @id",
-                new { id }, cancellationToken: ct));
+        order.Status = newStatus;
+        order.UpdatedAt = DateTime.UtcNow;
+        order.Version += 1;
 
-        if (current is null) return new UpdateStatusOutcome.NotFound();
-        if (current.Value.status == OrderStatuses.Cancelled) return new UpdateStatusOutcome.AlreadyCancelled();
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return new UpdateStatusOutcome.VersionConflict();
+        }
 
-        const string updateSql = """
-            UPDATE orders
-            SET    status = @newStatus, updated_at = now(), version = version + 1
-            WHERE  id = @id AND version = @v
-            RETURNING 1;
-            """;
-
-        var rows = await conn.ExecuteAsync(new CommandDefinition(
-            updateSql, new { id, newStatus, v = current.Value.version }, cancellationToken: ct));
-
-        if (rows == 0) return new UpdateStatusOutcome.VersionConflict();
-
-        var detailSql = $"""
-            SELECT {DetailColumns}
-            FROM   orders o
-            JOIN   suppliers s ON s.id = o.supplier_id
-            JOIN   products  p ON p.id = o.product_id
-            LEFT JOIN order_flags of ON of.order_id = o.id
-            WHERE  o.id = @id;
-            """;
-
-        var detail = await conn.QuerySingleAsync<OrderDetail>(new CommandDefinition(
-            detailSql, new { id }, cancellationToken: ct));
+        var detail = await GetDetailAsync(id, ct)
+            ?? throw new InvalidOperationException($"Order {id} not found after update");
         return new UpdateStatusOutcome.Updated(detail);
     }
 
     public async Task<OrderStats> GetStatsAsync(CancellationToken ct)
     {
-        const string sql = """
-            SELECT count(*)                              AS total_orders,
-                   COALESCE(sum(total_price), 0)         AS total_revenue,
-                   COALESCE(avg(total_price), 0)         AS avg_order_value
-            FROM   orders;
+        var orders = _db.Orders.AsNoTracking();
 
-            SELECT status,
-                   count(*)                              AS count,
-                   COALESCE(sum(total_price), 0)         AS total_value
-            FROM   orders
-            GROUP  BY status;
+        var totals = await orders
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                Count = g.LongCount(),
+                Total = g.Sum(o => (decimal?)o.TotalPrice) ?? 0m,
+                Avg = g.Average(o => (decimal?)o.TotalPrice) ?? 0m,
+            })
+            .FirstOrDefaultAsync(ct)
+            ?? new { Count = 0L, Total = 0m, Avg = 0m };
 
-            SELECT to_char(date_trunc('month', created_at), 'YYYY-MM') AS month,
-                   count(*)                              AS order_count,
-                   COALESCE(sum(total_price), 0)         AS revenue
-            FROM   orders
-            GROUP  BY date_trunc('month', created_at)
-            ORDER  BY date_trunc('month', created_at);
+        var byStatusRows = await orders
+            .GroupBy(o => o.Status)
+            .Select(g => new { Status = g.Key, Count = g.LongCount(), Total = g.Sum(o => (decimal?)o.TotalPrice) ?? 0m })
+            .ToListAsync(ct);
 
-            SELECT o.supplier_id,
-                   s.name                                AS supplier_name,
-                   COALESCE(sum(o.total_price), 0)       AS total_revenue
-            FROM   orders o
-            JOIN   suppliers s ON s.id = o.supplier_id
-            GROUP  BY o.supplier_id, s.name
-            ORDER  BY total_revenue DESC
-            LIMIT  10;
+        var byMonthRaw = await orders
+            .GroupBy(o => new { o.CreatedAt.Year, o.CreatedAt.Month })
+            .Select(g => new { g.Key.Year, g.Key.Month, Count = g.LongCount(), Revenue = g.Sum(o => (decimal?)o.TotalPrice) ?? 0m })
+            .ToListAsync(ct);
 
-            SELECT COALESCE(warehouse, 'unassigned')     AS warehouse,
-                   count(*)                              AS count,
-                   COALESCE(sum(total_price), 0)         AS total_value
-            FROM   orders
-            GROUP  BY COALESCE(warehouse, 'unassigned')
-            ORDER  BY warehouse;
-            """;
+        var byMonth = byMonthRaw
+            .OrderBy(r => r.Year).ThenBy(r => r.Month)
+            .Select(r => new ByMonthBucket($"{r.Year:D4}-{r.Month:D2}", r.Count, r.Revenue))
+            .ToList();
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await using var grid = await conn.QueryMultipleAsync(new CommandDefinition(
-            sql, cancellationToken: ct));
+        var topSuppliers = await orders
+            .GroupBy(o => o.SupplierId)
+            .Select(g => new { SupplierId = g.Key, TotalRevenue = g.Sum(o => (decimal?)o.TotalPrice) ?? 0m })
+            .OrderByDescending(x => x.TotalRevenue)
+            .Take(10)
+            .Join(_db.Suppliers, x => x.SupplierId, s => s.Id, (x, s) => new TopSupplier(x.SupplierId, s.Name, x.TotalRevenue))
+            .ToListAsync(ct);
 
-        var totals = await grid.ReadSingleAsync<(long total_orders, decimal total_revenue, decimal avg_order_value)>();
-        var byStatusRows = (await grid.ReadAsync<(string status, long count, decimal total_value)>()).AsList();
-        var byMonth = (await grid.ReadAsync<ByMonthBucket>()).AsList();
-        var topSuppliers = (await grid.ReadAsync<TopSupplier>()).AsList();
-        var byWarehouse = (await grid.ReadAsync<ByWarehouseBucket>()).AsList();
+        var byWarehouseRaw = await orders
+            .GroupBy(o => o.Warehouse)
+            .Select(g => new { Warehouse = g.Key, Count = g.LongCount(), Total = g.Sum(o => (decimal?)o.TotalPrice) ?? 0m })
+            .ToListAsync(ct);
+
+        var byWarehouse = byWarehouseRaw
+            .Select(r => new ByWarehouseBucket(r.Warehouse ?? "unassigned", r.Count, r.Total))
+            .OrderBy(b => b.Warehouse, StringComparer.Ordinal)
+            .ToList();
 
         var byStatus = byStatusRows.ToDictionary(
-            r => r.status,
-            r => new ByStatusBucket(r.count, r.total_value));
+            r => r.Status,
+            r => new ByStatusBucket(r.Count, r.Total));
 
         return new OrderStats(
-            totals.total_orders,
-            totals.total_revenue,
-            decimal.Round(totals.avg_order_value, 2),
+            totals.Count,
+            totals.Total,
+            decimal.Round(totals.Avg, 2),
             byStatus,
             byMonth,
             topSuppliers,
@@ -239,7 +191,7 @@ public sealed class OrderRepository : IOrderRepository
     public async Task<IReadOnlyList<AnomalyRow>> GetAnomalousAsync(CancellationToken ct)
     {
         const string sql = """
-            SELECT o.id AS order_id,
+            SELECT o.id AS "OrderId",
                    array_remove(ARRAY[
                      CASE WHEN abs(o.total_price - (o.quantity * o.unit_price)) > 0.01 THEN 'price_mismatch' END,
                      CASE WHEN o.quantity < 0                                          THEN 'negative_quantity' END,
@@ -249,7 +201,7 @@ public sealed class OrderRepository : IOrderRepository
                      CASE WHEN extract(hour FROM o.created_at) < 8
                             OR extract(hour FROM o.created_at) >= 18                   THEN 'after_hours' END,
                      CASE WHEN s.rating <= 1.5                                         THEN 'risky_supplier' END
-                   ], NULL) AS anomaly_types
+                   ], NULL) AS "AnomalyTypes"
             FROM   orders o
             JOIN   suppliers s ON s.id = o.supplier_id
             JOIN   products  p ON p.id = o.product_id
@@ -261,12 +213,10 @@ public sealed class OrderRepository : IOrderRepository
                OR  extract(hour FROM o.created_at) < 8
                OR  extract(hour FROM o.created_at) >= 18
                OR  s.rating <= 1.5
-            ORDER  BY o.id;
+            ORDER  BY o.id
             """;
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        var rows = await conn.QueryAsync<AnomalyRow>(new CommandDefinition(
-            sql, cancellationToken: ct));
-        return rows.AsList();
+        var rows = await _db.Database.SqlQueryRaw<AnomalyRow>(sql).ToListAsync(ct);
+        return rows;
     }
 }

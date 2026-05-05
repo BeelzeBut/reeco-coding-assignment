@@ -1,44 +1,65 @@
-using Dapper;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using NpgsqlTypes;
+using OrderOps.Api.Data;
+using OrderOps.Api.Data.Entities;
 
 namespace OrderOps.Api.Features.Bulk;
 
 public sealed class BulkRepository : IBulkRepository
 {
-    private readonly NpgsqlDataSource _dataSource;
+    private readonly AppDbContext _db;
 
-    public BulkRepository(NpgsqlDataSource dataSource) => _dataSource = dataSource;
+    public BulkRepository(AppDbContext db) => _db = db;
 
     public async Task InsertJobAsync(string id, string action, int total, CancellationToken ct)
     {
-        const string sql = """
-            INSERT INTO jobs (id, status, total, completed, failed, action)
-            VALUES (@id, 'processing', @total, 0, 0, @action);
-            """;
-
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await conn.ExecuteAsync(new CommandDefinition(sql, new { id, total, action }, cancellationToken: ct));
+        _db.Jobs.Add(new Job
+        {
+            Id = id,
+            Status = "processing",
+            Total = total,
+            Completed = 0,
+            Failed = 0,
+            Action = action,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
     }
 
     public async Task<JobMirrorRow?> GetJobAsync(string id, CancellationToken ct)
     {
-        const string sql = "SELECT id, status, total, completed, failed, action FROM jobs WHERE id = @id;";
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        return await conn.QuerySingleOrDefaultAsync<JobMirrorRow>(
-            new CommandDefinition(sql, new { id }, cancellationToken: ct));
+        var job = await _db.Jobs.AsNoTracking()
+            .FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null) return null;
+
+        return new JobMirrorRow
+        {
+            Id = job.Id,
+            Status = job.Status,
+            Total = job.Total,
+            Completed = job.Completed,
+            Failed = job.Failed,
+            Action = job.Action,
+        };
     }
 
     public async Task FinalizeJobAsync(string id, string status, int completed, int failed, CancellationToken ct)
     {
-        const string sql = """
-            UPDATE jobs
-            SET    status = @status, completed = @completed, failed = @failed, finished_at = now()
-            WHERE  id = @id;
-            """;
+        var job = await _db.Jobs.FirstOrDefaultAsync(j => j.Id == id, ct);
+        if (job is null) return;
+        job.Status = status;
+        job.Completed = completed;
+        job.Failed = failed;
+        job.FinishedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync(ct);
+    }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
-        await conn.ExecuteAsync(new CommandDefinition(
-            sql, new { id, status, completed, failed }, cancellationToken: ct));
+    private sealed class LockedRow
+    {
+        public string id { get; set; } = "";
+        public string status { get; set; } = "";
+        public int version { get; set; }
     }
 
     public async Task<BulkChunkResult> ApplyChunkAsync(
@@ -46,39 +67,44 @@ public sealed class BulkRepository : IBulkRepository
     {
         if (ids.Length == 0) return new BulkChunkResult(0, 0);
 
-        await using var conn = await _dataSource.OpenConnectionAsync(ct);
+        var existing = await _db.Orders.AsNoTracking()
+            .Where(o => ids.Contains(o.Id))
+            .Select(o => o.Id)
+            .ToListAsync(ct);
+        var existingSet = existing.ToHashSet(StringComparer.Ordinal);
+        var nonexistent = ids.Length - existingSet.Count;
 
-        var existing = (await conn.QueryAsync<string>(new CommandDefinition(
-            "SELECT id FROM orders WHERE id = ANY(@ids);",
-            new { ids }, cancellationToken: ct))).ToHashSet(StringComparer.Ordinal);
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
-        var nonexistent = ids.Length - existing.Count;
-
-        await using var tx = await conn.BeginTransactionAsync(ct);
-
-        var locked = (await conn.QueryAsync<(string id, string status, int version)>(new CommandDefinition(
-            "SELECT id, status, version FROM orders WHERE id = ANY(@ids) FOR UPDATE SKIP LOCKED;",
-            new { ids }, transaction: tx, cancellationToken: ct))).ToList();
+        var idsParam = new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Text) { Value = ids };
+        var locked = await _db.Database
+            .SqlQueryRaw<LockedRow>(
+                "SELECT id, status, version FROM orders WHERE id = ANY({0}) FOR UPDATE SKIP LOCKED",
+                idsParam)
+            .ToListAsync(ct);
 
         var lockedIds = locked.Select(r => r.id).ToHashSet(StringComparer.Ordinal);
-        var overlapCount = existing.Count(id => !lockedIds.Contains(id));
+        var overlapCount = existingSet.Count(id => !lockedIds.Contains(id));
 
         var completed = overlapCount;
         var failed = nonexistent;
 
         if (action == BulkActions.Flag)
         {
-            const string insertFlag = """
-                INSERT INTO order_flags (order_id, source_job_id, reason)
-                VALUES (@id, @jobId, @reason)
-                ON CONFLICT (order_id) DO NOTHING;
-                """;
+            const string insertFlag =
+                "INSERT INTO order_flags (order_id, source_job_id, reason) " +
+                "VALUES (@order_id, @source_job_id, @reason) " +
+                "ON CONFLICT (order_id) DO NOTHING";
 
             foreach (var row in locked)
             {
                 if (row.status == "cancelled") { failed++; continue; }
-                await conn.ExecuteAsync(new CommandDefinition(
-                    insertFlag, new { id = row.id, jobId, reason }, transaction: tx, cancellationToken: ct));
+                await _db.Database.ExecuteSqlRawAsync(insertFlag, new[]
+                {
+                    new NpgsqlParameter("order_id", NpgsqlDbType.Varchar) { Value = row.id },
+                    new NpgsqlParameter("source_job_id", NpgsqlDbType.Varchar) { Value = jobId },
+                    new NpgsqlParameter("reason", NpgsqlDbType.Text) { Value = (object?)reason ?? DBNull.Value },
+                }, ct);
                 completed++;
             }
         }
@@ -87,18 +113,20 @@ public sealed class BulkRepository : IBulkRepository
             var newStatus = BulkActions.MapToStatus(action)
                 ?? throw new InvalidOperationException($"unsupported action '{action}'");
 
-            const string updateStatus = """
-                UPDATE orders
-                SET    status = @newStatus, updated_at = now(), version = version + 1
-                WHERE  id = @id AND version = @v;
-                """;
+            const string updateSql =
+                "UPDATE orders " +
+                "SET    status = @status, updated_at = now(), version = version + 1 " +
+                "WHERE  id = @id AND version = @v";
 
             foreach (var row in locked)
             {
                 if (row.status == "cancelled") { failed++; continue; }
-                var rows = await conn.ExecuteAsync(new CommandDefinition(
-                    updateStatus, new { id = row.id, newStatus, v = row.version },
-                    transaction: tx, cancellationToken: ct));
+                var rows = await _db.Database.ExecuteSqlRawAsync(updateSql, new[]
+                {
+                    new NpgsqlParameter("status", NpgsqlDbType.Varchar) { Value = newStatus },
+                    new NpgsqlParameter("id", NpgsqlDbType.Varchar) { Value = row.id },
+                    new NpgsqlParameter("v", NpgsqlDbType.Integer) { Value = row.version },
+                }, ct);
                 if (rows == 1) completed++;
                 else failed++;
             }
